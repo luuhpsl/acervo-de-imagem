@@ -1,0 +1,43 @@
+# Ambientes e Dependências
+.venv/
+
+# Caches do Python e Ferramentas
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# Artefatos de Build
+*.egg-info/
+*.spec
+build/
+dist/
+
+# Skills geradas (cópias sincronizadas)
+.claude/
+.agents/
+
+# Segredos e variáveis locais
+.env
+.env.local
+.env.*.local
+token.json
+credentials.json
+serviceAccountKey.json
+firebase-debug.log
+*.log
+
+# Dados locais do app
+pending_metadata.json
+processing_queue.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/

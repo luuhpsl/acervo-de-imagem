@@ -1,0 +1,131 @@
+[project]
+name = "acervo-visual-inteligente"
+dynamic = ["version"]
+description = "Acervo visual inteligente para catalogar imagens locais com IA e Firebase."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "DevEdTech" }]
+keywords = ["acervo", "imagens", "firebase", "openai", "gui", "python"]
+
+# O template nao exige nenhuma dependencia de runtime por padrao.
+# A demonstração de notas usa apenas a biblioteca padrão (stdlib).
+# Adicione dependencias aqui apenas quando houver necessidade demonstrada
+# (registre a decisao em docs/decisions/).
+dependencies = [
+  "flask>=3.0.0",
+  "imagehash>=4.3.1",
+  "openai>=1.0.0",
+  "openpyxl>=3.1.0",
+  "pillow>=10.0.0",
+  "requests>=2.31.0",
+]
+
+[project.gui-scripts]
+# Entrada gráfica. No Windows, gui-scripts evita abrir uma janela de console.
+acervo-visual-gui = "acervo_visual_inteligente.gui:main"
+
+# Grupos de dependencias de desenvolvimento (PEP 735). O uv instala o grupo
+# "dev" automaticamente. Com pip: `pip install -e ".[dev]"` usa o optional
+# abaixo, que espelha este grupo.
+[dependency-groups]
+dev = [
+  "ruff>=0.9.0",
+  "mypy>=1.14.0",
+  "pytest>=8.3.0",
+  "pytest-cov>=6.0.0",
+  "pyinstaller>=6.11.0",
+  "pre-commit>=4.0.0",
+]
+
+[project.optional-dependencies]
+# Espelho de [dependency-groups].dev para quem usa pip em vez de uv.
+dev = [
+  "ruff>=0.9.0",
+  "mypy>=1.14.0",
+  "pytest>=8.3.0",
+  "pytest-cov>=6.0.0",
+  "pyinstaller>=6.11.0",
+  "pre-commit>=4.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Layout src/: o pacote instalavel vive em src/acervo_visual_inteligente.
+packages = ["src/acervo_visual_inteligente"]
+
+[tool.hatch.version]
+path = "src/acervo_visual_inteligente/__init__.py"
+
+# ---------------------------------------------------------------------------
+# Ruff: linter + formatador (substitui black, isort e flake8).
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+# Conjunto de regras voltado a qualidade e legibilidade.
+select = [
+  "E",   # pycodestyle (erros)
+  "W",   # pycodestyle (avisos)
+  "F",   # pyflakes
+  "I",   # isort (ordenacao de imports)
+  "N",   # pep8-naming
+  "UP",  # pyupgrade (sintaxe moderna)
+  "B",   # flake8-bugbear (armadilhas comuns)
+  "SIM", # flake8-simplify
+  "C4",  # flake8-comprehensions
+  "PTH", # flake8-use-pathlib
+  "RUF", # regras proprias do ruff
+  "S",   # flake8-bandit (segurança)
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# Testes podem usar asserts e nomes menos rigidos.
+"tests/**/*.py" = ["N802", "N803", "S101"]
+# Scripts locais confiam nos subcomandos
+"scripts/**/*.py" = ["S603", "S607"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# mypy: checagem de tipos em modo estrito.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+show_error_codes = true
+files = ["src", "tests", "scripts"]
+
+# ---------------------------------------------------------------------------
+# pytest: descoberta e execucao de testes.
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+pythonpath = ["src"]
+
+# ---------------------------------------------------------------------------
+# coverage: medicao de cobertura (opcional; use com --cov).
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80
