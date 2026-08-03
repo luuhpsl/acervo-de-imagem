@@ -11,7 +11,7 @@ src/acervo_visual_inteligente/
 ├── gui.py               # interface Tkinter e composição visual
 ├── catalogo_logic.py    # lógica de processamento do acervo
 ├── auth_server.py       # autenticação local via Flask/Firebase
-├── LAYOUT/              # ícones e imagens da interface
+├── Icons - Programa/    # ícones e imagens da interface
 ├── Font/                # fontes locais
 ├── acervo.ico
 └── index.html

@@ -1,73 +1,145 @@
-# Instruções do projeto
+# AGENTS.md
 
-## Leia primeiro
+Instruções para agentes de IA que forem trabalhar neste repositório.
 
-1. README.md
-2. docs/architecture.md
-3. docs/development-process.md
-4. docs/testing.md
-5. docs/building.md
+Este projeto é uma aplicação desktop Python/Tkinter para catalogação de acervo visual com OpenAI, Firebase Storage e Firestore. O objetivo dos agentes é implementar ajustes com segurança, preservar dados, manter a interface estável e evitar custos desnecessários de API.
 
-## Processo obrigatório
+## Leitura obrigatória antes de alterar código
 
-1. Entenda a solicitação e os critérios de aceite.
-2. Inspecione os arquivos relevantes e os testes existentes.
-3. Apresente um plano para mudanças que afetam vários arquivos.
-4. Mantenha as alterações dentro do escopo solicitado.
-5. Adicione ou atualize testes para mudanças de comportamento.
-6. Execute `python scripts/dev.py validate`.
-7. Revise o diff final.
-8. Atualize a documentação afetada.
+1. `README.md`
+2. `Documentos/Doc/visao-geral.md`
+3. `Documentos/Doc/arquitetura.md`
+4. `Documentos/Doc/uso.md`
+5. Arquivos diretamente afetados pela tarefa
 
-## Arquitetura
+## Arquivos principais
 
-- Organize as capacidades do produto em `src/<pacote>/features`.
-- Não importe módulos internos de outra feature.
-- Use a interface pública das features (o `__init__.py` de cada uma).
-- Mantenha a lógica de negócio em `model.py` e a orquestração compartilhada em `use_cases.py`.
-- Mantenha APIs externas e persistência atrás de serviços (`services.py`).
-- Isole adaptações de interface: `commands.py` para CLI e `gui.py` para GUI.
-- Mantenha as composições `src/<pacote>/cli.py` e `src/<pacote>/gui.py` sem regra de negócio.
-- Mantenha `shared` neutro em relação ao domínio.
-- Não adicione abstrações sem necessidade demonstrada.
+- `src/acervo_visual_inteligente/gui.py`: interface principal Tkinter.
+- `src/acervo_visual_inteligente/catalogo_logic.py`: regras de negócio, varredura, metadados, upload, filas e Firestore.
+- `src/acervo_visual_inteligente/auth_server.py`: autenticação local.
+- `src/acervo_visual_inteligente/index.html`: vitrine/local preview.
+- `src/acervo_visual_inteligente/Icons - Programa/`: ícones oficiais da interface.
+- `storage.rules`: regras de Firebase Storage.
+- `Documentos/Doc/`: documentação operacional do projeto.
 
-## Escopo
+## Regras de segurança
 
-- Não expanda o escopo além do solicitado.
-- Uma funcionalidade por vez.
+- Nunca exponha, imprima ou comite chaves de API, tokens, credenciais Firebase ou arquivos `.env.local`.
+- Não altere regras de Storage/Firestore sem explicar impacto e pedir confirmação quando houver risco.
+- Não envie arquivos reais do acervo para terceiros.
+- Não apague filas JSON automaticamente sem ação explícita do usuário.
+- Evite qualquer fluxo que faça chamadas extras à OpenAI sem necessidade clara.
+- Se uma correção puder ser feita localmente sem nova chamada à API, prefira a correção local.
 
-## Dependências
+## Versionamento
 
-- Não adicione dependências sem explicar a necessidade.
-- Prefira a biblioteca padrão (stdlib) e dependências já existentes.
-- O template começa com zero dependências de runtime — mantenha assim quando possível.
-- Nunca faça commit de segredos.
+- Toda alteração visível ao usuário deve atualizar a versão em:
+  - `src/acervo_visual_inteligente/__init__.py`
+  - fallback de versão em `src/acervo_visual_inteligente/gui.py`, se existir
+  - `tests/test_package_metadata.py`
+  - cópia legada `meu_catalogo_continuacao/main.py`, quando o ajuste ainda precisar ser espelhado
+- Use versionamento incremental:
+  - patch: correção pequena ou ajuste visual
+  - minor: novo recurso relevante
+  - major: mudança incompatível
 
-## Qualidade de código
+## Interface
 
-- Todo código novo tem type hints e passa no mypy em modo estrito.
-- Formatação e lint são feitos pelo Ruff (`python scripts/dev.py format` / `lint`).
-- Funções e módulos públicos têm docstrings claras.
-- Prefira `pathlib` a manipulação de strings de caminho.
-- Escreva código portável entre Windows, macOS e Linux.
-- Não bloqueie o loop de eventos da GUI com I/O ou processamento demorado.
+- Preserve o estilo retrô/Windows 98.
+- Mantenha tooltips nos botões.
+- Não remova botões existentes sem pedido explícito.
+- Ícones devem vir de `src/acervo_visual_inteligente/Icons - Programa/`.
+- A cópia antiga pode existir, mas a pasta central de ícones deve ser a do projeto principal.
+- Evite bloquear a janela com operações longas. Varredura, upload, conversão e OpenAI são candidatos a thread/fila.
 
-## Persistência e APIs
+## Filas JSON
 
-- Acesso a disco, rede ou variáveis de ambiente fica em `services.py`.
-- `model.py` permanece puro: sem I/O, fácil de testar.
+Fluxos esperados:
 
-## Testes
+- `pending_metadata.json`: arquivos que falharam e precisam de reprocessamento.
+- `processing_queue.json`: fila/checkpoint atual do processamento.
+- Futuro desejado:
+  - `lista_completa_de_varredura.json`
+  - `lista_materiais_interrompidos.json`
+  - `arquivos_metadata_pendentes.json`
 
-- Toda mudança de comportamento deve considerar testes (pytest).
-- Teste o resultado observável, não os detalhes internos.
-- Teste GUI com casos de uso, controladores ou janelas falsas; não dependa de display real na suíte padrão.
+Ao alterar filas:
 
-## Documentação
+- Use escrita atômica: grave em `.tmp` e substitua com `os.replace`.
+- Preserve caminhos originais.
+- Não descarte itens sem registrar no log.
+- Em queda de energia, o usuário deve conseguir retomar.
 
-- Toda decisão relevante atualiza a documentação ou gera um ADR.
+## OpenAI
 
-## Conclusão
+- Modelo atual do fluxo: `gpt-4o-mini`.
+- Use `detail: low` para reduzir custo.
+- Não implemente retry automático caro sem aprovação.
+- Para erro de JSON da IA, prefira correção local de JSON quando seguro.
+- Se precisar consultar preço/modelo atual, use apenas fontes oficiais da OpenAI.
 
-Uma tarefa só está concluída quando critérios de aceite, testes,
-lint, typecheck, build e documentação estiverem satisfeitos.
+## Firebase
+
+Estrutura esperada no Storage:
+
+```text
+acervo-visual-unificado/
+├── thumbnails/{origem}/{ano}/IMG-{ano}-{sequencial}.jpg
+└── originals/
+    ├── raster/{origem}/{ano}/IMG-{ano}-{sequencial}.{jpg|jpeg|png}
+    └── vector/{origem}/{ano}/IMG-{ano}-{sequencial}.{eps|ai|svg}
+```
+
+Metadados ficam no Firestore e devem conter caminhos/URLs suficientes para ligar thumbnail, original e futuro site.
+
+## Duplicidade e variações
+
+- SHA-256 identifica arquivo idêntico.
+- pHash identifica imagem visualmente semelhante.
+- Se houver PB e colorida da mesma imagem, a colorida deve prevalecer.
+- Se só existir PB, a PB pode ser enviada.
+- Se uma colorida aparecer depois de uma PB já processada, a colorida também deve ser mantida.
+- Se uma PB aparecer depois de uma colorida equivalente, a PB deve ser ignorada como duplicada.
+
+## Validação mínima
+
+Antes de entregar alterações em Python:
+
+```powershell
+python -m py_compile src\acervo_visual_inteligente\gui.py src\acervo_visual_inteligente\catalogo_logic.py src\acervo_visual_inteligente\auth_server.py
+```
+
+Quando dependências de dev estiverem instaladas:
+
+```powershell
+python -m pytest
+```
+
+Se `pytest` não estiver instalado, informe isso no resumo e rode validação equivalente quando possível.
+
+## Git
+
+- Verifique o estado antes de alterar:
+
+```powershell
+git status --short --branch
+```
+
+- Preserve alterações existentes do usuário.
+- Não use `git reset --hard`.
+- Não force push.
+- Remote oficial:
+
+```text
+https://github.com/DevEdTech/Acervo-de-Imagens.git
+```
+
+## Estilo de entrega
+
+Ao finalizar:
+
+- Explique o resultado.
+- Liste arquivos alterados.
+- Informe validações executadas.
+- Aponte pendências ou riscos reais.
+- Seja direto e em português.

@@ -517,10 +517,10 @@
         dadosPagina.forEach(doc => {
             const tr = document.createElement('tr');
 
-            // Miniatura – CORRIGIDO: usa url_visualizacao
+            // Miniatura: documentos novos usam url_thumbnail; antigos podem ter url_visualizacao
             const tdImg = document.createElement('td');
             const img = document.createElement('img');
-            img.src = doc.url_visualizacao || doc.url || 'https://via.placeholder.com/40';
+            img.src = doc.url_thumbnail || doc.url_visualizacao || doc.url || 'https://via.placeholder.com/40';
             img.alt = doc.nome_amigavel || '';
             tdImg.appendChild(img);
             tr.appendChild(tdImg);
@@ -669,7 +669,8 @@
         const dados = imagensUnicas.map(doc => ({
             'Nome do Arquivo': doc.nome_original || '',
             'Origem': doc.origem || '',
-            'Link da Imagem': doc.url_visualizacao || doc.url || '',
+            'Link Thumbnail': doc.url_thumbnail || doc.url_visualizacao || doc.url || '',
+            'Link Original': doc.url_original || '',
             'Tipo da Imagem': doc.tipo_imagem || '',
             'Elementos Visuais': doc.elementos_visuais || '',
             'Estilo/Técnica': doc.estilo_tecnica || '',
@@ -682,7 +683,6 @@
             'Descrição': doc.descricao_detalhada || '',
             'Resolução': doc.resolucao || '',
             'Tamanho (MB)': doc.tamanho_mb || '',
-            'Código (UUID)': doc.codigo || doc.id || '',
             'Nome Amigável': doc.nome_amigavel || '',
             'Data de Processamento': doc.data_processamento ? new Date(doc.data_processamento).toLocaleString('pt-BR') : ''
         }));

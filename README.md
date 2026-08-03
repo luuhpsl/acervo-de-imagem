@@ -1,83 +1,174 @@
-# Acervo Visual Inteligente
+# Acervo de Imagens
 
-Aplicação desktop em Python para catalogar imagens locais, gerar metadados com IA,
-identificar duplicatas, criar thumbnails e enviar arquivos para Firebase Storage e
-Firestore.
+Aplicação desktop em Python para catalogar acervos visuais locais com apoio de IA. O programa varre pastas do computador, identifica imagens e arquivos vetoriais, gera thumbnails, classifica o conteúdo com OpenAI Vision, envia os arquivos para Firebase Storage e registra os metadados no Firestore.
 
-## Principais recursos
+O objetivo do projeto é formar uma base organizada para um futuro banco de imagens, permitindo que pessoas pesquisem, visualizem thumbnails e baixem os arquivos originais em alta resolução.
 
-- Interface gráfica retrô em Tkinter.
-- Login via Firebase Auth.
-- Geração de metadados com OpenAI Vision.
-- Suporte a JPG, JPEG, PNG, SVG, EPS e AI.
-- Conversão de arquivos vetoriais para JPG de leitura.
-- Upload de originais e thumbnails para Firebase Storage.
-- Registro de metadados no Firestore.
-- Controle de pendências quando a IA falha.
-- Checkpoint de fila a cada 10 arquivos para reduzir risco de perda de progresso.
-- Exportação para Excel.
+## Recursos principais
+
+- Interface gráfica desktop em Tkinter com tema retrô inspirado no Windows 98.
 - Tema claro/escuro.
+- Login via Firebase Authentication.
+- Varredura recursiva de subpastas.
+- Suporte a `.jpg`, `.jpeg`, `.png`, `.eps`, `.ai` e `.svg`.
+- Conversão de arquivos vetoriais para JPG de leitura/thumbnail.
+- Geração de metadados com OpenAI Vision (`gpt-4o-mini`).
+- Criação de thumbnail para uso futuro no site.
+- Upload de original e thumbnail para Firebase Storage.
+- Registro de dados no Firestore.
+- Detecção de duplicidade por hash SHA-256 e pHash.
+- Preferência por variações coloridas quando existir versão colorida e preto-e-branco.
+- Fila/checkpoint de processamento para reduzir perda de progresso.
+- JSON de pendências para reprocessamento posterior.
+- Botão para carregar JSON de retomada manualmente.
+- Exportação para Excel.
+- Vitrine HTML local para consulta simples.
 
-## Estrutura adaptada do template
+## Estrutura principal
 
 ```text
-src/acervo_visual_inteligente/
-├── gui.py              # entrada da interface desktop
-├── catalogo_logic.py   # motor de processamento do acervo
-├── auth_server.py      # servidor local de autenticação
-├── LAYOUT/             # ícones e assets da interface
-├── Font/               # fontes locais
-├── acervo.ico
-└── index.html          # vitrine/local preview
+.
+├── README.md
+├── AGENTS.md
+├── pyproject.toml
+├── storage.rules
+├── Documentos/
+│   └── Doc/
+│       ├── arquitetura.md
+│       ├── build-publicacao.md
+│       ├── git-github-powershell.md
+│       ├── uso.md
+│       └── visao-geral.md
+├── src/
+│   └── acervo_visual_inteligente/
+│       ├── __init__.py
+│       ├── __main__.py
+│       ├── auth_server.py
+│       ├── catalogo_logic.py
+│       ├── gui.py
+│       ├── index.html
+│       ├── acervo.ico
+│       ├── Font/
+│       └── Icons - Programa/
+└── tests/
+```
+
+## Como instalar
+
+Requisitos recomendados:
+
+- Python 3.11 ou superior.
+- Git para versionamento.
+- ImageMagick e Ghostscript para converter EPS/AI/SVG quando necessário.
+- Conta/projeto Firebase com Authentication, Firestore e Storage.
+- Chave de API da OpenAI.
+
+Instalação com `pip`:
+
+```powershell
+cd "C:\Users\lucas.silveira\Documents\Codex\2026-07-29\ol-chat-tenho-esse-programa-que\template-ia-python-master"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+```
+
+Instalação com `uv`, se disponível:
+
+```powershell
+uv sync
 ```
 
 ## Configuração
 
-Copie `.env.example` para `.env.local` e preencha:
+Copie `.env.example` para `.env.local` e preencha as chaves reais:
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+Variáveis esperadas:
 
 ```env
 OPENAI_API_KEY=
 FIREBASE_API_KEY=
-FIREBASE_PROJECT_ID=uniasselvi-digital
-FIREBASE_STORAGE_BUCKET=uniasselvi-digital.appspot.com
+FIREBASE_AUTH_DOMAIN=
+FIREBASE_PROJECT_ID=
+FIREBASE_STORAGE_BUCKET=
+FIREBASE_APP_ID=
 ```
 
-> Não faça commit de `.env.local`, `token.json`, `credentials.json` ou outros
-> arquivos de credenciais.
+Nunca faça commit de arquivos com credenciais, tokens ou chaves privadas.
 
-## Instalação
+## Como executar
 
-Com `uv`:
+Com o ambiente ativado:
 
-```bash
-uv sync
-```
-
-Com `pip`:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e ".[dev]"
-```
-
-## Execução
-
-Com o pacote instalado:
-
-```bash
+```powershell
 acervo-visual-gui
 ```
 
-Ou diretamente:
+Ou:
 
-```bash
-python -m acervo_visual_inteligente
+```powershell
+python -m acervo_visual_inteligente.gui
 ```
+
+## Fluxo de uso
+
+1. Abra o programa.
+2. Faça login com uma conta autorizada.
+3. Clique em `Selecionar Pasta`.
+4. Aguarde a varredura.
+5. Clique em `Play`.
+6. Acompanhe o log, progresso, tempo e métricas laterais.
+7. Se houver falhas, use `Reprocessar Pendentes`.
+8. Se houver uma lista de retomada, use o botão de upload para carregar um JSON.
+
+## Organização no Firebase Storage
+
+Estrutura planejada:
+
+```text
+acervo-visual-unificado/
+├── thumbnails/
+│   └── {origem}/{ano}/IMG-{ano}-{sequencial}.jpg
+└── originals/
+    ├── raster/
+    │   └── {origem}/{ano}/IMG-{ano}-{sequencial}.{jpg|jpeg|png}
+    └── vector/
+        └── {origem}/{ano}/IMG-{ano}-{sequencial}.{eps|ai|svg}
+```
+
+As thumbnails servem para visualização futura no site. Os originais são os arquivos que serão disponibilizados para download em alta resolução ou no formato vetorial original.
 
 ## Validação rápida
 
-```bash
-python -m py_compile src/acervo_visual_inteligente/gui.py src/acervo_visual_inteligente/catalogo_logic.py src/acervo_visual_inteligente/auth_server.py
-pytest
+```powershell
+python -m py_compile src\acervo_visual_inteligente\gui.py src\acervo_visual_inteligente\catalogo_logic.py src\acervo_visual_inteligente\auth_server.py
+python -m pytest
 ```
+
+Se `pytest` não estiver instalado:
+
+```powershell
+pip install -e ".[dev]"
+```
+
+## GitHub
+
+Remote oficial:
+
+[https://github.com/DevEdTech/Acervo-de-Imagens.git](https://github.com/DevEdTech/Acervo-de-Imagens.git)
+
+Documentação de Git/PowerShell está em:
+
+[Documentos/Doc/git-github-powershell.md](Documentos/Doc/git-github-powershell.md)
+
+## Documentação complementar
+
+- [Visão geral](Documentos/Doc/visao-geral.md)
+- [Arquitetura](Documentos/Doc/arquitetura.md)
+- [Uso](Documentos/Doc/uso.md)
+- [Build e publicação](Documentos/Doc/build-publicacao.md)
+- [Git, GitHub e PowerShell](Documentos/Doc/git-github-powershell.md)

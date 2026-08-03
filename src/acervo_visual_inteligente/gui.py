@@ -4,15 +4,17 @@ import ctypes
 import os
 import sys
 import io
+import time
+import json
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 
 from PIL import Image, ImageTk, ImageDraw, ImageOps
 
 try:
     from acervo_visual_inteligente import __version__
 except Exception:
-    __version__ = "2.0.0"
+    __version__ = "2.0.10"
 
 
 APP_VERSION = __version__
@@ -71,7 +73,7 @@ def _resource_path(*parts):
 BASE_DIR = _app_dir()
 RESOURCE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
 APP_DIR = BASE_DIR
-ASSET_DIR = _resource_path("LAYOUT")
+ASSET_DIR = _resource_path("Icons - Programa")
 FONT_DIR = _resource_path("Font")
 ICON_PATH = _resource_path("acervo.ico")
 PARENT_MAIN = _resource_path("catalogo_logic.py")
@@ -216,6 +218,15 @@ def _theme_widget_tree(widget, theme):
                 fg=theme["log_fg"],
                 insertbackground=theme["log_fg"],
             )
+        elif isinstance(widget, tk.Scrollbar):
+            widget.configure(
+                bg=theme["button_bg"],
+                activebackground=theme["button_active"],
+                troughcolor=theme["log_bg"],
+                highlightbackground=theme["bg"],
+                relief="raised",
+                bd=1,
+            )
         elif isinstance(widget, tk.Label):
             bg_role = _color_role(widget.cget("bg")) or "bg"
             fg_role = _fg_role(widget.cget("fg")) or "text"
@@ -269,6 +280,9 @@ def load_catalogo_logic():
             + "ultimo_erro_openai = None\n\n"
             + "PAUSADO = False\n"
             + "PAUSA_LOGADA = False\n\n"
+            + "PARAR_PROCESSAMENTO = False\n\n"
+            + "mostrar_resultado_processamento = None\n\n"
+            + "COR_VARIACAO_CACHE = {}\n\n"
             + source[helpers_start:]
         )
     marker = "\nframe_botoes = tk.Frame"
@@ -278,7 +292,19 @@ def load_catalogo_logic():
     pause_hook_target = "    for idx in range(inicio_processamento, total):\n        caminho = arquivos_encontrados[idx]"
     pause_hook = (
         "    for idx in range(inicio_processamento, total):\n"
+        "        if globals().get('PARAR_PROCESSAMENTO', False):\n"
+        "            apagar_fila_processamento()\n"
+        "            globals()['PARAR_PROCESSAMENTO'] = False\n"
+        "            log('Processamento parado. Fila de processamento apagada.')\n"
+        "            return\n"
         "        while globals().get('PAUSADO', False):\n"
+        "            if globals().get('PARAR_PROCESSAMENTO', False):\n"
+        "                apagar_fila_processamento()\n"
+        "                globals()['PARAR_PROCESSAMENTO'] = False\n"
+        "                globals()['PAUSADO'] = False\n"
+        "                globals()['PAUSA_LOGADA'] = False\n"
+        "                log('Processamento parado. Fila de processamento apagada.')\n"
+        "                return\n"
         "            if not globals().get('PAUSA_LOGADA', False):\n"
         "                log('Processamento pausado. Clique em Pausar novamente para continuar.')\n"
         "                globals()['PAUSA_LOGADA'] = True\n"
@@ -374,6 +400,84 @@ class ThemeSwitch(tk.Canvas):
         self.create_oval(cx - 1, cy - 7, cx + 9, cy + 7, fill=cutout_color, outline=cutout_color)
 
 
+class RetroScrollbar(tk.Canvas):
+    def __init__(self, master, command=None, width=18, **kwargs):
+        super().__init__(master, width=width, highlightthickness=0, bd=0, **kwargs)
+        self.command = command
+        self.first = 0.0
+        self.last = 1.0
+        self.drag_offset = 0
+        self.bind("<Configure>", lambda _event: self.draw())
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<B1-Motion>", self._on_drag)
+
+    def set(self, first, last):
+        self.first = max(0.0, min(1.0, float(first)))
+        self.last = max(self.first, min(1.0, float(last)))
+        self.draw()
+
+    def apply_theme(self):
+        self.draw()
+
+    def _thumb_geometry(self):
+        width = max(1, self.winfo_width())
+        height = max(1, self.winfo_height())
+        arrow = min(18, max(0, height // 4))
+        track_top = arrow
+        track_bottom = max(track_top + 1, height - arrow)
+        track_height = max(1, track_bottom - track_top)
+        visible = max(0.03, self.last - self.first)
+        thumb_height = max(28, int(track_height * visible))
+        thumb_top = track_top + int(track_height * self.first)
+        thumb_top = min(max(track_top, thumb_top), max(track_top, track_bottom - thumb_height))
+        return width, height, arrow, track_top, track_bottom, thumb_top, thumb_top + thumb_height
+
+    def draw(self):
+        theme = current_theme()
+        width, height, arrow, track_top, track_bottom, thumb_top, thumb_bottom = self._thumb_geometry()
+        track = theme["log_bg"]
+        thumb = theme["button_bg"]
+        outline = theme["muted"]
+        arrow_fg = theme["muted"]
+        self.configure(bg=track)
+        self.delete("all")
+        self.create_rectangle(0, 0, width, height, fill=track, outline=outline)
+        if arrow >= 12:
+            cx = width // 2
+            self.create_polygon(cx, 5, cx - 5, 12, cx + 5, 12, fill=arrow_fg, outline=arrow_fg)
+            self.create_polygon(cx, height - 5, cx - 5, height - 12, cx + 5, height - 12, fill=arrow_fg, outline=arrow_fg)
+        self.create_rectangle(2, track_top, width - 3, track_bottom, fill=track, outline=track)
+        if self.last < 0.999 or self.first > 0.001:
+            self.create_rectangle(3, thumb_top, width - 4, thumb_bottom, fill=thumb, outline=outline)
+
+    def _on_click(self, event):
+        _width, height, arrow, _track_top, _track_bottom, thumb_top, thumb_bottom = self._thumb_geometry()
+        if arrow and event.y < arrow:
+            if self.command:
+                self.command("scroll", -1, "units")
+            return
+        if arrow and event.y > height - arrow:
+            if self.command:
+                self.command("scroll", 1, "units")
+            return
+        if thumb_top <= event.y <= thumb_bottom:
+            self.drag_offset = event.y - thumb_top
+            return
+        if self.command:
+            self.command("scroll", -1 if event.y < thumb_top else 1, "pages")
+
+    def _on_drag(self, event):
+        if not self.command:
+            return
+        _width, _height, _arrow, track_top, track_bottom, thumb_top, thumb_bottom = self._thumb_geometry()
+        track_height = max(1, track_bottom - track_top)
+        thumb_height = max(1, thumb_bottom - thumb_top)
+        movable = max(1, track_height - thumb_height)
+        new_top = min(max(track_top, event.y - self.drag_offset), track_bottom - thumb_height)
+        new_first = (new_top - track_top) / movable
+        self.command("moveto", new_first)
+
+
 class Tooltip:
     def __init__(self, widget, text, delay_ms=450):
         self.widget = widget
@@ -429,7 +533,11 @@ class MetricValueAdapter:
     def config(self, **kwargs):
         text = kwargs.get("text")
         if isinstance(text, str) and ":" in text:
-            kwargs["text"] = text.split(":", 1)[1].strip()
+            text = text.split(":", 1)[1].strip()
+        if isinstance(text, str) and text.replace(".", "").isdigit():
+            text = f"{int(text.replace('.', '')):,}".replace(",", ".")
+        if isinstance(text, str):
+            kwargs["text"] = text
         self.label.config(**kwargs)
 
 
@@ -445,6 +553,8 @@ class FoundValueAdapter:
             else:
                 value = text.strip()
             value = value.replace("arq.", "").replace("arq", "").strip()
+            if value.replace(".", "").isdigit():
+                value = f"{int(value.replace('.', '')):,}".replace(",", ".")
             kwargs["text"] = value
         self.label.config(**kwargs)
 
@@ -584,6 +694,8 @@ class CatalogoLayout:
 
         self.images = {}
         self.processando = False
+        self.process_start_time = None
+        self.process_elapsed_final = None
         self.return_reason = "closed"
         self._build_ui()
         self._apply_theme()
@@ -626,10 +738,13 @@ class CatalogoLayout:
         self.pausar_icon = self._asset_tinted("Pausar Processo.png", icon_size, color)
         self.exportar_icon = self._asset_tinted("Baixar Excel.png", icon_size, color)
         self.vitrine_icon = self._asset_tinted("Abrir Vitrine (2).png", icon_size, color)
+        self.carregar_json_icon = self._asset_tinted("Upload.png", icon_size, color)
         self.btn_pendentes.config(image=self.pendentes_icon)
         self.btn_pausar.config(image=self.pausar_icon)
         self.btn_exportar.config(image=self.exportar_icon)
         self.btn_vitrine.config(image=self.vitrine_icon)
+        if hasattr(self, "btn_carregar_json"):
+            self.btn_carregar_json.config(image=self.carregar_json_icon)
 
     def _criar_avatar_padrao(self, initials=""):
         size = 44
@@ -775,16 +890,17 @@ class CatalogoLayout:
         self.btn_selecionar.pack(fill="both", expand=True)
         Tooltip(self.btn_selecionar, "Selecionar pasta")
 
+        action_bar = tk.Frame(toolbar, bg="#c0c0c0")
+        action_bar.pack(side="right", padx=(8, 0))
+
         self.path_var = tk.StringVar(value="")
         self.path_entry = tk.Entry(toolbar, textvariable=self.path_var, bd=2, relief="sunken", font=(UI_FONT, 9))
         self.path_entry.pack(side="left", fill="x", expand=True, padx=(8, 4), ipady=4)
 
-        action_bar = tk.Frame(toolbar, bg="#c0c0c0")
-        action_bar.pack(side="left", padx=(12, 8))
-
         icon_size = (15, 15)
         self.play_icon = self._asset_tinted("Iniciar Processamento.png", icon_size, "#149b20")
         self.play_icon_disabled = self._asset_tinted("Iniciar Processamento.png", icon_size, "#777777")
+        self.parar_icon = self._asset_tinted("Parar Processo.png", icon_size, "#c00000")
         self.btn_iniciar = RetroButton(
             action_bar,
             image=self.play_icon,
@@ -793,12 +909,21 @@ class CatalogoLayout:
         )
         self.btn_iniciar.pack(side="left", padx=2)
         Tooltip(self.btn_iniciar, "Play / Iniciar processamento")
+        self.btn_parar = RetroButton(
+            action_bar,
+            image=self.parar_icon,
+            width=30,
+            height=TOOLBAR_CONTROL_HEIGHT,
+        )
+        self.btn_parar.pack(side="left", padx=2)
+        Tooltip(self.btn_parar, "Parar processamento e apagar fila")
 
         action_icon_color = self._action_icon_color()
         self.pendentes_icon = self._asset_tinted("Reprocessar Pendentes.png", icon_size, action_icon_color)
         self.pausar_icon = self._asset_tinted("Pausar Processo.png", icon_size, action_icon_color)
         self.exportar_icon = self._asset_tinted("Baixar Excel.png", icon_size, action_icon_color)
         self.vitrine_icon = self._asset_tinted("Abrir Vitrine (2).png", icon_size, action_icon_color)
+        self.carregar_json_icon = self._asset_tinted("Upload.png", icon_size, action_icon_color)
 
         self.btn_pendentes = RetroButton(action_bar, image=self.pendentes_icon, width=30, height=TOOLBAR_CONTROL_HEIGHT)
         self.btn_pendentes.pack(side="left", padx=2)
@@ -812,6 +937,9 @@ class CatalogoLayout:
         self.btn_vitrine = RetroButton(action_bar, image=self.vitrine_icon, width=30, height=TOOLBAR_CONTROL_HEIGHT)
         self.btn_vitrine.pack(side="left", padx=2)
         Tooltip(self.btn_vitrine, "Abrir vitrine")
+        self.btn_carregar_json = RetroButton(action_bar, image=self.carregar_json_icon, width=30, height=TOOLBAR_CONTROL_HEIGHT)
+        self.btn_carregar_json.pack(side="left", padx=2)
+        Tooltip(self.btn_carregar_json, "Upload / carregar JSON de retomada")
 
         main = tk.Frame(self.window, bg="#c0c0c0")
         main.pack(fill="both", expand=True, padx=18, pady=(0, 8))
@@ -823,8 +951,13 @@ class CatalogoLayout:
         for index, word in enumerate(("Log", "do", "Processo")):
             padx = (0, 3) if index < 2 else (0, 0)
             tk.Label(log_title, text=word, bg="#c0c0c0", fg="#000000", font=(PIXEL_FONT, 10)).pack(side="left", padx=padx)
-        self.log_texto = tk.Text(log_panel, height=18, bd=2, relief="sunken", wrap="char", bg="#ffffff", fg="#000000", font=("Courier New", 10))
-        self.log_texto.pack(fill="both", expand=True)
+        log_body = tk.Frame(log_panel, bg="#c0c0c0")
+        log_body.pack(fill="both", expand=True)
+        self.log_texto = tk.Text(log_body, height=18, bd=2, relief="sunken", wrap="char", bg="#ffffff", fg="#000000", font=("Courier New", 10))
+        self.log_scroll = RetroScrollbar(log_body, command=self.log_texto.yview)
+        self.log_texto.configure(yscrollcommand=self.log_scroll.set)
+        self.log_texto.pack(side="left", fill="both", expand=True)
+        self.log_scroll.pack(side="right", fill="y")
         self.log_texto.config(state="disabled")
 
         metrics = tk.Frame(main, bg="#c0c0c0", width=184)
@@ -849,7 +982,7 @@ class CatalogoLayout:
         self.progresso.pack(fill="x")
         status = tk.Frame(bottom, bg="#c0c0c0")
         status.pack(fill="x", pady=(7, 0))
-        self.lbl_progresso = tk.Label(status, text="Progresso: 0%", bg="#c0c0c0", font=(UI_FONT, 9))
+        self.lbl_progresso = tk.Label(status, text="Progresso: 0%  |  Tempo: 00:00:00", bg="#c0c0c0", font=(UI_FONT, 9))
         self.lbl_progresso.pack(side="left")
         tk.Label(status, text=f"Produ\u00e7\u00e3o Digital / Vers\u00e3o {APP_VERSION}", bg="#c0c0c0", fg="#777777", font=(PIXEL_FONT, 7)).pack(side="right")
 
@@ -871,6 +1004,8 @@ class CatalogoLayout:
         self._refresh_action_icons()
         if hasattr(self, "theme_switch"):
             self.theme_switch.draw()
+        if hasattr(self, "log_scroll"):
+            self.log_scroll.apply_theme()
 
     def _toggle_theme(self):
         toggle_theme_name()
@@ -905,7 +1040,9 @@ class CatalogoLayout:
         self.logic.DISPLAY_FILE_LIMIT = 0
         self.logic.PAUSADO = False
         self.logic.PAUSA_LOGADA = False
+        self.logic.PARAR_PROCESSAMENTO = False
         self.logic.QUEUE_CHECKPOINT_INTERVAL = TAMANHO_LOTE_CHECKPOINT
+        self.logic.mostrar_resultado_processamento = self._mostrar_resultado_processamento
 
         original_log = self.logic.log
 
@@ -913,7 +1050,7 @@ class CatalogoLayout:
             original_log(message)
             if str(message).startswith("Processamento retomado"):
                 self.btn_pausar.config(relief="raised", bg=current_theme()["button_bg"])
-            self.lbl_progresso.config(text=f"Progresso: {int(float(self.progresso['value']))}%")
+            self._atualizar_rotulo_progresso()
             try:
                 self.root.update()
             except tk.TclError:
@@ -922,10 +1059,70 @@ class CatalogoLayout:
         self.logic.log = ui_log
         self.btn_selecionar.config(command=self._selecionar_pasta)
         self.btn_iniciar.config(command=self._iniciar)
+        self.btn_parar.config(command=self._parar)
         self.btn_pendentes.config(command=self._reprocessar_pendentes)
         self.btn_pausar.config(command=self._pausar)
         self.btn_exportar.config(command=self.logic.exportar_para_excel)
         self.btn_vitrine.config(command=self.logic.abrir_vitrine)
+        self.btn_carregar_json.config(command=self._carregar_json_retomada)
+
+    def _formatar_tempo_processamento(self):
+        if not self.processando and self.process_elapsed_final:
+            return self.process_elapsed_final
+        if not self.process_start_time:
+            return "00:00:00"
+        segundos = max(0, int(time.time() - self.process_start_time))
+        horas, resto = divmod(segundos, 3600)
+        minutos, segundos = divmod(resto, 60)
+        return f"{horas:02d}:{minutos:02d}:{segundos:02d}"
+
+    def _atualizar_rotulo_progresso(self):
+        percentual = int(float(self.progresso["value"]))
+        self.lbl_progresso.config(text=f"Progresso: {percentual}%  |  Tempo: {self._formatar_tempo_processamento()}")
+
+    def _mostrar_resultado_processamento(self, processados, duplicados, erros, tempo_total):
+        self.process_elapsed_final = tempo_total
+        self._atualizar_rotulo_progresso()
+        popup = tk.Toplevel(self.root)
+        popup.title("Processamento concluido")
+        popup.configure(bg=current_theme()["bg"])
+        popup.resizable(False, False)
+        popup.transient(self.root)
+        popup.grab_set()
+
+        titulo = "Processamento concluido"
+        if erros:
+            titulo = "Processamento concluido com pendencias"
+
+        tk.Label(popup, text=titulo, bg=current_theme()["bg"], fg=current_theme()["text"], font=(UI_FONT, 10, "bold")).pack(padx=24, pady=(18, 10))
+        mensagem = (
+            f"Processados: {processados}\n"
+            f"Duplicados: {duplicados}\n"
+            f"Erros/Pendencias: {erros}\n"
+            f"Tempo total: {tempo_total}"
+        )
+        tk.Label(popup, text=mensagem, bg=current_theme()["bg"], fg=current_theme()["text"], font=(UI_FONT, 9), justify="left").pack(padx=24, pady=(0, 14))
+
+        botoes = tk.Frame(popup, bg=current_theme()["bg"])
+        botoes.pack(padx=18, pady=(0, 18))
+
+        def fechar():
+            popup.destroy()
+
+        def reprocessar():
+            popup.destroy()
+            self.root.after(100, self._reprocessar_pendentes)
+
+        RetroButton(botoes, text="Fechar", command=fechar, width=12, height=2).pack(side="left", padx=6)
+        if erros:
+            RetroButton(botoes, text="Reprocessar Pendentes", command=reprocessar, width=22, height=2).pack(side="left", padx=6)
+
+        _theme_widget_tree(popup, current_theme())
+        popup.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (popup.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (popup.winfo_height() // 2)
+        popup.geometry(f"+{x}+{y}")
+        self.root.wait_window(popup)
 
     def _buscar_perfil_usuario(self):
         token = getattr(self.logic, "token_usuario", None)
@@ -1009,7 +1206,8 @@ class CatalogoLayout:
         if self.logic.arquivos_encontrados:
             pasta = os.path.dirname(self.logic.arquivos_encontrados[0])
             self.path_var.set(pasta)
-        self.lbl_encontrados.config(text=str(len(self.logic.arquivos_encontrados)))
+        total = len(self.logic.arquivos_encontrados)
+        self.lbl_encontrados.config(text=f"{total:,}".replace(",", "."))
 
     def _total_arquivos_para_processar(self):
         total = len(getattr(self.logic, "arquivos_encontrados", []) or [])
@@ -1022,6 +1220,107 @@ class CatalogoLayout:
         except Exception:
             pass
         return 0
+
+    def _formatar_numero_interface(self, valor):
+        return f"{int(valor):,}".replace(",", ".")
+
+    def _extrair_caminhos_json(self, dados):
+        arquivos = []
+        inicio = 0
+        if isinstance(dados, dict):
+            try:
+                inicio = max(0, int(dados.get("next_index", 0) or 0))
+            except (TypeError, ValueError):
+                inicio = 0
+            for chave in ("files", "arquivos", "materiais", "itens", "lista", "paths"):
+                if isinstance(dados.get(chave), list):
+                    arquivos = dados.get(chave)
+                    break
+            if not arquivos:
+                possiveis_pendencias = []
+                for item in dados.values():
+                    if isinstance(item, dict):
+                        caminho = item.get("caminho") or item.get("path") or item.get("arquivo")
+                        if caminho:
+                            possiveis_pendencias.append(caminho)
+                arquivos = possiveis_pendencias
+        elif isinstance(dados, list):
+            arquivos = dados
+
+        caminhos = []
+        for item in arquivos:
+            if isinstance(item, str):
+                caminho = item
+            elif isinstance(item, dict):
+                caminho = item.get("caminho") or item.get("path") or item.get("arquivo")
+            else:
+                caminho = None
+            if caminho:
+                caminhos.append(caminho)
+
+        if inicio and inicio < len(caminhos):
+            caminhos = caminhos[inicio:]
+        elif inicio >= len(caminhos):
+            caminhos = []
+        return caminhos
+
+    def _carregar_json_retomada(self):
+        if self.processando:
+            self.logic.log("Aguarde o processamento terminar antes de carregar outro JSON.")
+            return
+        caminho_json = filedialog.askopenfilename(
+            title="Carregar JSON de retomada",
+            filetypes=(("Arquivos JSON", "*.json"), ("Todos os arquivos", "*.*")),
+        )
+        if not caminho_json:
+            return
+        try:
+            with open(caminho_json, "r", encoding="utf-8") as arquivo:
+                dados = json.load(arquivo)
+        except Exception as exc:
+            messagebox.showerror("JSON inválido", f"Não foi possível ler o arquivo JSON.\n\n{exc}")
+            return
+
+        caminhos = self._extrair_caminhos_json(dados)
+        if not caminhos:
+            messagebox.showwarning("JSON sem arquivos", "Não encontrei caminhos de arquivos válidos nesse JSON.")
+            return
+
+        caminhos_existentes = [caminho for caminho in caminhos if os.path.exists(caminho)]
+        ausentes = len(caminhos) - len(caminhos_existentes)
+        if not caminhos_existentes:
+            messagebox.showwarning("Arquivos ausentes", "Nenhum arquivo listado no JSON foi encontrado neste computador.")
+            return
+
+        self.logic.arquivos_encontrados = caminhos_existentes
+        try:
+            self.logic.lista_arquivos.delete(0, tk.END)
+            limite = getattr(self.logic, "DISPLAY_FILE_LIMIT", 0)
+            for caminho in caminhos_existentes[:limite]:
+                self.logic.lista_arquivos.insert(tk.END, caminho)
+            if limite and len(caminhos_existentes) > limite:
+                restante = self._formatar_numero_interface(len(caminhos_existentes) - limite)
+                self.logic.lista_arquivos.insert(tk.END, f"... mais {restante} arquivos ocultos na lista visual")
+        except Exception:
+            pass
+
+        arquivo_fila = self.logic.salvar_fila_processamento(
+            caminhos_existentes,
+            pasta_origem=f"json:{caminho_json}",
+            next_index=0,
+            completed=False,
+        )
+        total_formatado = self._formatar_numero_interface(len(caminhos_existentes))
+        self.lbl_encontrados.config(text=total_formatado)
+        self.logic.atualizar_metricas(len(caminhos_existentes), 0, 0, 0, 0)
+        self.path_var.set(os.path.dirname(caminhos_existentes[0]))
+        self.progresso["value"] = 0
+        self._atualizar_rotulo_progresso()
+        self.logic.log(f"JSON de retomada carregado: {total_formatado} arquivos prontos para processar.")
+        if ausentes:
+            self.logic.log(f"Aviso: {self._formatar_numero_interface(ausentes)} arquivos do JSON nao foram encontrados neste computador.")
+        if arquivo_fila:
+            self.logic.log(f"Fila recriada a partir do JSON em: {arquivo_fila}")
 
     def _perguntar_modo_arquivos_grandes(self, total):
         popup = tk.Toplevel(self.root)
@@ -1039,7 +1338,7 @@ class CatalogoLayout:
 
         tk.Label(
             popup,
-            text=f"Foram encontrados {total} arquivos.",
+            text=f"Foram encontrados {total:,}".replace(",", ".") + " arquivos.",
             bg="#c0c0c0",
             fg="#111111",
             font=(UI_FONT, 10, "bold"),
@@ -1097,37 +1396,81 @@ class CatalogoLayout:
         if not self._preparar_modo_processamento():
             return
         self.processando = True
+        self.process_start_time = time.time()
+        self.process_elapsed_final = None
+        self._atualizar_rotulo_progresso()
         self.logic.PAUSADO = False
         self.logic.PAUSA_LOGADA = False
+        self.logic.PARAR_PROCESSAMENTO = False
         self.btn_pausar.config(relief="raised", bg=current_theme()["button_bg"])
+        self.btn_parar.config(relief="raised", bg=current_theme()["button_bg"])
         self.btn_iniciar.config(state="disabled", image=self.play_icon_disabled, bg=current_theme()["button_bg"], activebackground=current_theme()["button_bg"])
         self.root.update_idletasks()
         try:
             self.logic.iniciar_processamento()
         finally:
+            self.process_elapsed_final = self._formatar_tempo_processamento()
             self.processando = False
             self.logic.PAUSADO = False
             self.logic.PAUSA_LOGADA = False
+            self.logic.PARAR_PROCESSAMENTO = False
             self.btn_pausar.config(relief="raised", bg=current_theme()["button_bg"])
+            self.btn_parar.config(relief="raised", bg=current_theme()["button_bg"])
             self.btn_iniciar.config(state="normal", image=self.play_icon, bg=current_theme()["button_bg"], activebackground=current_theme()["button_active"])
+            self._atualizar_rotulo_progresso()
 
     def _reprocessar_pendentes(self):
         if self.processando:
             return
         self.processando = True
+        self.process_start_time = time.time()
+        self.process_elapsed_final = None
+        self._atualizar_rotulo_progresso()
         self.logic.PAUSADO = False
         self.logic.PAUSA_LOGADA = False
+        self.logic.PARAR_PROCESSAMENTO = False
         self.btn_pausar.config(relief="raised", bg=current_theme()["button_bg"])
+        self.btn_parar.config(relief="raised", bg=current_theme()["button_bg"])
         self.btn_iniciar.config(state="disabled", image=self.play_icon_disabled, bg=current_theme()["button_bg"], activebackground=current_theme()["button_bg"])
         self.root.update_idletasks()
         try:
             self.logic.reprocessar_pendentes()
         finally:
+            self.process_elapsed_final = self._formatar_tempo_processamento()
             self.processando = False
             self.logic.PAUSADO = False
             self.logic.PAUSA_LOGADA = False
+            self.logic.PARAR_PROCESSAMENTO = False
             self.btn_pausar.config(relief="raised", bg=current_theme()["button_bg"])
+            self.btn_parar.config(relief="raised", bg=current_theme()["button_bg"])
             self.btn_iniciar.config(state="normal", image=self.play_icon, bg=current_theme()["button_bg"], activebackground=current_theme()["button_active"])
+            self._atualizar_rotulo_progresso()
+
+    def _parar(self):
+        removidos = []
+        if hasattr(self.logic, "apagar_fila_processamento"):
+            removidos = self.logic.apagar_fila_processamento()
+        self.logic.PARAR_PROCESSAMENTO = True
+        self.logic.PAUSADO = False
+        self.logic.PAUSA_LOGADA = False
+        self.logic.arquivos_encontrados = []
+        try:
+            self.logic.lista_arquivos.delete(0, tk.END)
+        except Exception:
+            pass
+        self.path_var.set("")
+        self.progresso["value"] = 0
+        self.process_start_time = None
+        self.process_elapsed_final = None
+        self._atualizar_rotulo_progresso()
+        self.logic.atualizar_metricas(0, 0, 0, 0)
+        self.btn_parar.config(relief="sunken", bg=current_theme()["panel"])
+        if self.processando:
+            self.logic.log("Parada solicitada. O programa vai encerrar antes da proxima imagem e a fila foi apagada.")
+        elif removidos:
+            self.logic.log("Fila de processamento apagada. Selecione uma nova pasta para comecar novamente.")
+        else:
+            self.logic.log("Nenhuma fila de processamento encontrada. Selecione uma nova pasta para comecar.")
 
     def _pausar(self):
         if not self.processando:

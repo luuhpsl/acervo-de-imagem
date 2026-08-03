@@ -55,6 +55,8 @@ PREFIXOS_ACEITOS = ('shutterstock_', 'envato-', 'pexels', 'freestock')
 EXTENSOES_PERMITIDAS = ('.jpg', '.jpeg', '.png', '.ai', '.eps', '.svg')
 EXTENSOES_VETORIAIS = ('.eps', '.ai', '.svg')
 THUMBNAIL_MAX_SIZE = (600, 600)
+VECTOR_PREVIEW_MAX_SIZE = (2000, 2000)
+VECTOR_PREVIEW_DENSITY = 96
 DISPLAY_FILE_LIMIT = 1000
 LOG_MAX_LINES = 500
 QUEUE_CHECKPOINT_INTERVAL = 10
@@ -95,17 +97,24 @@ token_usuario = None
 email_usuario = None
 ultimo_erro_openai = None
 linha_log_varredura = None
+PAUSADO = False
+PAUSA_LOGADA = False
+PARAR_PROCESSAMENTO = False
+mostrar_resultado_processamento = None
+COR_VARIACAO_CACHE = {}
 
 # ============================================================
 # FUNÇÕES AUXILIARES
 # ============================================================
 def log(mensagem):
+    estava_no_fim = log_texto.yview()[1] >= 0.98
     log_texto.config(state='normal')
     log_texto.insert(tk.END, mensagem + '\n')
     linhas = int(log_texto.index('end-1c').split('.')[0])
     if linhas > LOG_MAX_LINES:
         log_texto.delete('1.0', f'{linhas - LOG_MAX_LINES}.0')
-    log_texto.see(tk.END)
+    if estava_no_fim:
+        log_texto.see(tk.END)
     log_texto.config(state='disabled')
     janela.update_idletasks()
 
@@ -132,15 +141,16 @@ def atualizar_log_varredura(percentual=None):
             linha_log_varredura = None
             log_texto.insert(tk.END, mensagem + '\n')
             linha_log_varredura = log_texto.index("end-2l linestart")
-    log_texto.see(tk.END)
+    if log_texto.yview()[1] >= 0.98:
+        log_texto.see(tk.END)
     log_texto.config(state='disabled')
     janela.update_idletasks()
 
 def atualizar_metricas(encontrados, processados, duplicados, erros, progresso_valor=None):
-    lbl_encontrados.config(text=f"Encontrados: {encontrados}")
-    lbl_processados.config(text=f"Processados: {processados}")
-    lbl_duplicados.config(text=f"Duplicados: {duplicados}")
-    lbl_erros.config(text=f"Erros: {erros}")
+    lbl_encontrados.config(text=f"Encontrados: {formatar_numero(encontrados)}")
+    lbl_processados.config(text=f"Processados: {formatar_numero(processados)}")
+    lbl_duplicados.config(text=f"Duplicados: {formatar_numero(duplicados)}")
+    lbl_erros.config(text=f"Erros: {formatar_numero(erros)}")
     if progresso_valor is not None:
         progresso['value'] = progresso_valor
     janela.update_idletasks()
@@ -148,10 +158,11 @@ def atualizar_metricas(encontrados, processados, duplicados, erros, progresso_va
 # ============================================================
 # CONVERSÃO EPS/AI PARA JPG (ImageMagick + Ghostscript)
 # ============================================================
-def converter_para_jpg(entrada, saida, densidade=300, qualidade=90):
+def converter_para_jpg(entrada, saida, densidade=VECTOR_PREVIEW_DENSITY, qualidade=88, tamanho_maximo=VECTOR_PREVIEW_MAX_SIZE):
     """
-    Converte EPS ou AI para JPG usando ImageMagick.
-    Seleciona apenas o primeiro frame ([0]) para evitar duplicatas.
+    Converte EPS, AI ou SVG para JPG usando ImageMagick.
+    Seleciona apenas o primeiro frame ([0]) para evitar duplicatas e limita
+    a imagem gerada para impedir JPGs temporarios gigantes.
     """
     if not os.path.exists(entrada):
         log(f"❌ Arquivo de entrada não encontrado: {entrada}")
@@ -169,26 +180,33 @@ def converter_para_jpg(entrada, saida, densidade=300, qualidade=90):
             log("❌ ImageMagick não encontrado. Instale e tente novamente.")
             return False
 
+    # Adiciona [0] para pegar apenas o primeiro frame
+    entrada_com_frame = entrada + "[0]"
+    largura_maxima, altura_maxima = tamanho_maximo
+    resize_arg = f"{largura_maxima}x{altura_maxima}>"
     if comando_base == 'magick':
-        cmd = ['magick', 'convert']
+        cmd = ['magick']
     else:
         cmd = ['convert']
 
-    # Adiciona [0] para pegar apenas o primeiro frame
-    entrada_com_frame = entrada + "[0]"
-
     cmd.extend([
         '-density', str(densidade),
+        entrada_com_frame,
         '-background', 'white',
+        '-alpha', 'remove',
+        '-alpha', 'off',
         '-flatten',
         '-trim',
+        '+repage',
+        '-resize', resize_arg,
+        '-strip',
         '-quality', str(qualidade),
-        entrada_com_frame,
         saida
     ])
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
+        log(f"   JPG de preview criado em {obter_resolucao(saida)} (limite {largura_maxima}x{altura_maxima}).")
         return True
     except subprocess.CalledProcessError as e:
         log(f"   ❌ Erro na conversão: {e.stderr}")
@@ -408,17 +426,6 @@ def gravar_no_firestore(dados, doc_id):
     try:
         response = requests.post(url, headers=headers, json=body)
         if response.status_code in (200, 201):
-            origem = str(dados.get("origem", "")).strip().lower()
-            if origem and origem != "desconhecido":
-                origem_url = (
-                    f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/"
-                    f"acervo-visual-unificado/{origem}/images?documentId={doc_id}"
-                )
-                origem_response = requests.post(origem_url, headers=headers, json=body)
-                if origem_response.status_code in (200, 201):
-                    log(f"   Espelho salvo no Firestore por origem: {origem}")
-                else:
-                    log(f"   Aviso: nao foi possivel salvar espelho por origem ({origem}): {origem_response.status_code}")
             log(f"   💾 Dados salvos no Firestore (ID: {doc_id})")
             return True
         else:
@@ -650,6 +657,69 @@ def testar_openai():
         log(f"❌ Falha ao conectar com OpenAI: {str(e)}")
         return False
 
+def carregar_json_resposta_ia(texto_resposta):
+    global ultimo_erro_openai
+    if not texto_resposta:
+        ultimo_erro_openai = "Resposta vazia da IA."
+        return None
+
+    json_match = re.search(r'\{.*\}', texto_resposta, re.DOTALL)
+    if not json_match:
+        ultimo_erro_openai = "Resposta da IA nao contem JSON valido."
+        log("   Resposta da IA nao contem JSON valido.")
+        return None
+
+    texto_json = json_match.group()
+    try:
+        return json.loads(texto_json)
+    except json.JSONDecodeError as erro_original:
+        texto_corrigido = re.sub(r',(\s*[}\]])', r'\1', texto_json)
+        if texto_corrigido != texto_json:
+            try:
+                log("   JSON da IA tinha virgula sobrando; corrigido localmente.")
+                return json.loads(texto_corrigido)
+            except json.JSONDecodeError:
+                pass
+        ultimo_erro_openai = f"JSON invalido retornado pela IA: {erro_original}"
+        log(f"   JSON invalido retornado pela IA: {erro_original}")
+        return None
+
+def formatar_duracao(segundos):
+    segundos = max(0, int(segundos))
+    horas, resto = divmod(segundos, 3600)
+    minutos, segundos = divmod(resto, 60)
+    return f"{horas:02d}:{minutos:02d}:{segundos:02d}"
+
+def formatar_numero(valor):
+    try:
+        return f"{int(valor):,}".replace(",", ".")
+    except (TypeError, ValueError):
+        return str(valor)
+
+def formatar_tamanho_bytes(bytes_total):
+    try:
+        tamanho = float(bytes_total)
+    except (TypeError, ValueError):
+        return "0 KB"
+    unidades = ["B", "KB", "MB", "GB", "TB"]
+    indice = 0
+    while tamanho >= 1024 and indice < len(unidades) - 1:
+        tamanho /= 1024
+        indice += 1
+    if indice == 0:
+        return f"{int(tamanho)} {unidades[indice]}"
+    texto = f"{tamanho:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+    return f"{texto} {unidades[indice]}"
+
+def calcular_tamanho_total(arquivos):
+    total = 0
+    for caminho in arquivos:
+        try:
+            total += os.path.getsize(caminho)
+        except OSError:
+            continue
+    return total
+
 def analisar_imagem_com_openai(caminho_imagem):
     global ultimo_erro_openai
     ultimo_erro_openai = None
@@ -700,17 +770,13 @@ def analisar_imagem_com_openai(caminho_imagem):
                     ]
                 }
             ],
+            response_format={"type": "json_object"},
             max_tokens=600
         )
         texto_resposta = resposta.choices[0].message.content
-        json_match = re.search(r'\{.*\}', texto_resposta, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
-        else:
-            ultimo_erro_openai = "Resposta da IA nao contem JSON valido."
-            log("   ⚠️ Resposta da IA não contém JSON válido.")
-            return None
+        return carregar_json_resposta_ia(texto_resposta)
     except Exception as e:
+        ultimo_erro_openai = str(e)
         log(f"   ❌ Erro no OpenAI: {str(e)}")
         return None
 
@@ -747,10 +813,10 @@ def exportar_para_excel():
         ws.title = "Acervo"
         
         cabecalhos = [
-            "Nome do Arquivo", "Link da Imagem", "Link Thumbnail", "Link Original", "Tipo da Imagem", "Elementos Visuais",
+            "Nome do Arquivo", "Link Thumbnail", "Link Original", "Tipo da Imagem", "Elementos Visuais",
             "Estilo/Técnica", "Formato", "Cores Predominantes", "Área do Conhecimento",
             "Características", "Palavras-chave PT", "Palavras-chave EN", "Descrição",
-            "Resolução da Imagem", "Tamanho (MB)", "Código (UUID)", "Nome Amigável",
+            "Resolução da Imagem", "Tamanho (MB)", "Nome Amigável",
             "Data de Processamento", "Origem"
         ]
         ws.append(cabecalhos)
@@ -773,8 +839,7 @@ def exportar_para_excel():
             
             linha = [
                 get_valor("nome_original"),
-                get_valor("url_visualizacao"),
-                get_valor("url_thumbnail"),
+                get_valor("url_thumbnail") or get_valor("url_visualizacao"),
                 get_valor("url_original"),
                 get_valor("tipo_imagem"),
                 get_valor("elementos_visuais"),
@@ -788,7 +853,6 @@ def exportar_para_excel():
                 get_valor("descricao_detalhada"),
                 get_valor("resolucao"),
                 get_valor("tamanho_mb"),
-                get_valor("codigo"),
                 get_valor("nome_amigavel"),
                 get_valor("data_processamento"),
                 get_valor("origem")
@@ -833,6 +897,55 @@ def calcular_phash(caminho):
         log(f"   ⚠️ Erro ao calcular pHash: {str(e)}")
         return None
 
+def detectar_caracteristica_cor_por_nome(nome_arquivo):
+    stem = os.path.splitext(os.path.basename(nome_arquivo))[0].lower()
+    stem = texto_sem_acentos(stem)
+    if re.search(r'(^|[\s_\-().])(?:pb|p-b|p_b|bw|bn|preto[ _-]?branco|preto[ _-]?e[ _-]?branco|black[ _-]?white|black[ _-]?and[ _-]?white|grayscale|greyscale|mono|monocromatico|monochrome)(?:$|[\s_\-().])', stem):
+        return "preto_e_branco"
+    if re.search(r'(^|[\s_\-().])(?:color|colour|colored|colorida|colorido|cores|fullcolor|full[ _-]?color)(?:$|[\s_\-().])', stem):
+        return "colorida"
+    return None
+
+def detectar_caracteristica_cor(caminho):
+    if caminho in COR_VARIACAO_CACHE:
+        return COR_VARIACAO_CACHE[caminho]
+
+    por_nome = detectar_caracteristica_cor_por_nome(caminho)
+    if por_nome:
+        COR_VARIACAO_CACHE[caminho] = por_nome
+        return por_nome
+
+    extensao = os.path.splitext(caminho)[1].lower()
+    if extensao in EXTENSOES_VETORIAIS:
+        COR_VARIACAO_CACHE[caminho] = "desconhecida"
+        return "desconhecida"
+
+    try:
+        with Image.open(caminho) as img:
+            if img.mode in ("1", "L", "LA"):
+                COR_VARIACAO_CACHE[caminho] = "preto_e_branco"
+                return "preto_e_branco"
+            img = ImageOps.exif_transpose(img).convert("RGB")
+            img.thumbnail((64, 64))
+            pixels = list(img.getdata())
+        if not pixels:
+            resultado = "desconhecida"
+        else:
+            deltas = [max(pixel) - min(pixel) for pixel in pixels]
+            media_delta = sum(deltas) / len(deltas)
+            proporcao_colorida = sum(1 for delta in deltas if delta > 18) / len(deltas)
+            if media_delta <= 4 and proporcao_colorida < 0.01:
+                resultado = "preto_e_branco"
+            elif media_delta >= 8 or proporcao_colorida >= 0.03:
+                resultado = "colorida"
+            else:
+                resultado = "desconhecida"
+    except Exception:
+        resultado = "desconhecida"
+
+    COR_VARIACAO_CACHE[caminho] = resultado
+    return resultado
+
 def detectar_origem(nome_arquivo):
     """Retorna a origem baseada no prefixo do arquivo."""
     nome_lower = nome_arquivo.lower()
@@ -872,6 +985,34 @@ def extrair_chave_numeracao(caminho):
         return None
     return origem, match.group(0)
 
+def formatar_chave_numeracao(caminho):
+    chave = extrair_chave_numeracao(caminho)
+    if not chave:
+        return ""
+    origem, numero = chave
+    return f"{origem}:{numero}"
+
+def obter_string_firestore(doc, campo):
+    fields = doc.get("fields", {}) if isinstance(doc, dict) else {}
+    valor = fields.get(campo, {})
+    return valor.get("stringValue", "") if isinstance(valor, dict) else ""
+
+def obter_caracteristica_cor_firestore(doc):
+    caracteristica = obter_string_firestore(doc, "caracteristica_cor")
+    if caracteristica:
+        return caracteristica
+    nome_original = obter_string_firestore(doc, "nome_original")
+    return detectar_caracteristica_cor_por_nome(nome_original) or "desconhecida"
+
+def deve_manter_colorida_com_pb_existente(doc_similar, chave_numeracao, caracteristica_cor):
+    if caracteristica_cor != "colorida" or not chave_numeracao:
+        return False
+    chave_doc = obter_string_firestore(doc_similar, "chave_numeracao")
+    if not chave_doc:
+        nome_original = obter_string_firestore(doc_similar, "nome_original")
+        chave_doc = formatar_chave_numeracao(nome_original)
+    return chave_doc == chave_numeracao and obter_caracteristica_cor_firestore(doc_similar) == "preto_e_branco"
+
 def arquivo_parece_copia(caminho):
     stem = os.path.splitext(os.path.basename(caminho))[0].lower()
     stem = texto_sem_acentos(stem)
@@ -897,11 +1038,19 @@ def prioridade_arquivo_original(caminho):
     if match:
         sufixo = restante[match.end():].strip(' _-.()')
 
+    prioridade_cor = {
+        "colorida": 0,
+        "desconhecida": 1,
+        "preto_e_branco": 2,
+    }.get(detectar_caracteristica_cor(caminho), 1)
+
     if not sufixo:
-        return (0, len(nome), nome.lower())
-    if not arquivo_parece_copia(caminho):
-        return (1, len(nome), nome.lower())
-    return (2, len(nome), nome.lower())
+        prioridade_nome = 0
+    elif not arquivo_parece_copia(caminho):
+        prioridade_nome = 1
+    else:
+        prioridade_nome = 2
+    return (prioridade_cor, prioridade_nome, len(nome), nome.lower())
 
 def filtrar_copias_por_numeracao(caminhos):
     grupos = {}
@@ -1006,6 +1155,23 @@ def atualizar_checkpoint_processamento(next_index, completed=False):
     except Exception as e:
         log(f"Erro ao atualizar checkpoint: {str(e)}")
 
+def apagar_fila_processamento():
+    removidos = []
+    caminhos = {
+        PROCESSING_QUEUE_FILE,
+        PROCESSING_QUEUE_FALLBACK_FILE,
+        PROCESSING_QUEUE_FILE + ".tmp",
+        PROCESSING_QUEUE_FALLBACK_FILE + ".tmp",
+    }
+    for caminho in caminhos:
+        try:
+            if os.path.exists(caminho):
+                os.remove(caminho)
+                removidos.append(caminho)
+        except Exception as e:
+            log(f"Erro ao apagar fila de processamento ({caminho}): {str(e)}")
+    return removidos
+
 def carregar_pendencias():
     arquivo = obter_arquivo_pendencias()
     if not os.path.exists(arquivo):
@@ -1041,6 +1207,9 @@ def registrar_pendencia(caminho, origem, hash_sha256, phash_str, extensao, motiv
         "caminho": caminho,
         "nome_original": os.path.basename(caminho),
         "origem": origem,
+        "chave_numeracao": formatar_chave_numeracao(caminho),
+        "caracteristica_cor": detectar_caracteristica_cor(caminho),
+        "eh_preto_e_branco": detectar_caracteristica_cor(caminho) == "preto_e_branco",
         "sha256": hash_sha256 or "",
         "phash": phash_str or "",
         "extensao": extensao,
@@ -1077,21 +1246,21 @@ def reprocessar_pendentes():
             removidos += 1
     if removidos:
         salvar_pendencias(pendencias)
-        log(f"Removidas {removidos} pendencias com arquivo local ausente.")
+        log(f"Removidas {formatar_numero(removidos)} pendencias com arquivo local ausente.")
     if not arquivos_validos:
         messagebox.showwarning("Pendencias", "Nenhuma pendencia possui arquivo local acessivel.")
         return
     arquivos_encontrados, arquivos_ignorados = filtrar_copias_por_numeracao(arquivos_validos)
     if arquivos_ignorados:
-        log(f"Ignoradas {len(arquivos_ignorados)} pendencias duplicadas por mesma numeracao.")
+        log(f"Ignoradas {formatar_numero(len(arquivos_ignorados))} pendencias duplicadas por mesma numeracao.")
     lista_arquivos.delete(0, tk.END)
     for caminho in arquivos_encontrados[:DISPLAY_FILE_LIMIT]:
         lista_arquivos.insert(tk.END, caminho)
     if len(arquivos_encontrados) > DISPLAY_FILE_LIMIT:
-        lista_arquivos.insert(tk.END, f"... mais {len(arquivos_encontrados) - DISPLAY_FILE_LIMIT} arquivos pendentes ocultos na lista visual")
+        lista_arquivos.insert(tk.END, f"... mais {formatar_numero(len(arquivos_encontrados) - DISPLAY_FILE_LIMIT)} arquivos pendentes ocultos na lista visual")
     salvar_fila_processamento(arquivos_encontrados, pasta_origem="pendencias", next_index=0, completed=False)
     atualizar_metricas(len(arquivos_encontrados), 0, 0, 0, 0)
-    log(f"Reprocessando {len(arquivos_encontrados)} pendencias.")
+    log(f"Reprocessando {formatar_numero(len(arquivos_encontrados))} pendencias.")
     iniciar_processamento()
 
 def escolher_pasta():
@@ -1135,14 +1304,15 @@ def escolher_pasta():
                 atualizar_metricas(len(arquivos_candidatos), 0, 0, 0)
     arquivos_encontrados, arquivos_ignorados = filtrar_copias_por_numeracao(arquivos_candidatos)
     total = len(arquivos_encontrados)
+    tamanho_total = calcular_tamanho_total(arquivos_encontrados)
     for caminho in arquivos_encontrados[:DISPLAY_FILE_LIMIT]:
         lista_arquivos.insert(tk.END, caminho)
     if arquivos_ignorados:
-        log(f"Ignoradas {len(arquivos_ignorados)} copias/variacoes com a mesma numeracao.")
-    log(f"✅ Encontrados {total} arquivos.")
+        log(f"Ignoradas {formatar_numero(len(arquivos_ignorados))} copias/variacoes com a mesma numeracao.")
+    log(f"✅ Encontrados {formatar_numero(total)} arquivos ({formatar_tamanho_bytes(tamanho_total)}).")
     if total > DISPLAY_FILE_LIMIT:
-        lista_arquivos.insert(tk.END, f"... mais {total - DISPLAY_FILE_LIMIT} arquivos ocultos na lista visual")
-        log(f"Lista visual limitada aos primeiros {DISPLAY_FILE_LIMIT} arquivos para manter o programa leve.")
+        lista_arquivos.insert(tk.END, f"... mais {formatar_numero(total - DISPLAY_FILE_LIMIT)} arquivos ocultos na lista visual")
+        log(f"Lista visual limitada aos primeiros {formatar_numero(DISPLAY_FILE_LIMIT)} arquivos para manter o programa leve.")
     arquivo_fila = salvar_fila_processamento(arquivos_encontrados, pasta_origem=pasta, next_index=0, completed=False)
     if arquivo_fila:
         log(f"Fila de processamento salva em: {arquivo_fila}")
@@ -1190,6 +1360,11 @@ def iniciar_processamento_antigo_sem_fila():
             erros += 1
             continue
 
+        chave_numeracao = formatar_chave_numeracao(caminho)
+        caracteristica_cor = detectar_caracteristica_cor(caminho)
+        if caracteristica_cor != "desconhecida":
+            log(f"   Variação de cor: {caracteristica_cor}.")
+
         # --- HASH SHA-256 ---
         hash_sha256 = calcular_hash_sha256(caminho)
         if not hash_sha256:
@@ -1210,11 +1385,14 @@ def iniciar_processamento_antigo_sem_fila():
         if phash_str:
             doc_similar = consultar_phash_similar(phash_str, limite_distancia=5)
             if doc_similar:
-                remover_pendencia(hash_sha256)
-                log(f"   🔄 DUPLICATA VISUAL (pHash similar). Pulando.")
-                duplicados += 1
-                atualizar_metricas(total, processados, duplicados, erros)
-                continue
+                if deve_manter_colorida_com_pb_existente(doc_similar, chave_numeracao, caracteristica_cor):
+                    log("   Variação colorida encontrada para item que existia em PB. Mantendo para upload.")
+                else:
+                    remover_pendencia(hash_sha256)
+                    log(f"   🔄 DUPLICATA VISUAL (pHash similar). Pulando.")
+                    duplicados += 1
+                    atualizar_metricas(total, processados, duplicados, erros)
+                    continue
         else:
             log("   ⚠️ Não foi possível calcular pHash.")
 
@@ -1232,7 +1410,7 @@ def iniciar_processamento_antigo_sem_fila():
             # Cria um JPG temporário para análise
             imagem_convertida_temp = os.path.join(os.path.dirname(caminho), f"temp_{uuid_img}.jpg")
             log(f"   🔄 Convertendo {extensao} para JPG...")
-            if converter_para_jpg(caminho, imagem_convertida_temp, densidade=300, qualidade=90):
+            if converter_para_jpg(caminho, imagem_convertida_temp):
                 imagem_para_analise = imagem_convertida_temp
                 log(f"   ✅ Conversão concluída.")
             else:
@@ -1269,7 +1447,7 @@ def iniciar_processamento_antigo_sem_fila():
 
         log(f"   âœ… AnÃ¡lise OpenAI concluÃ­da!")
 
-        destino_visualizacao = f"acervo-visual-unificado/images/{origem}/{ano}/{nome_amigavel}.jpg"
+        destino_visualizacao = f"acervo-visual-unificado/thumbnails/{origem}/{ano}/{nome_amigavel}.jpg"
         log(f"   📤 Upload visualização: {destino_visualizacao}")
         url_visualizacao = fazer_upload_imagem(imagem_para_analise, destino_visualizacao)
         if not url_visualizacao:
@@ -1282,7 +1460,7 @@ def iniciar_processamento_antigo_sem_fila():
         # --- UPLOAD DO ARQUIVO ORIGINAL (se for EPS/AI) ---
         url_original = None
         if extensao in ('.eps', '.ai'):
-            destino_original = f"acervo-visual-unificado/originals/{origem}/{ano}/{nome_amigavel}{extensao}"
+            destino_original = f"acervo-visual-unificado/originals/vector/{origem}/{ano}/{nome_amigavel}{extensao}"
             log(f"   📤 Upload original: {destino_original}")
             url_original = fazer_upload_imagem(caminho, destino_original)
 
@@ -1307,6 +1485,9 @@ def iniciar_processamento_antigo_sem_fila():
             "url_visualizacao": url_visualizacao,
             "url_original": url_original,
             "origem": origem,
+            "chave_numeracao": chave_numeracao,
+            "caracteristica_cor": caracteristica_cor,
+            "eh_preto_e_branco": caracteristica_cor == "preto_e_branco",
             "sha256": hash_sha256,
             "phash": phash_str if phash_str else "",
             "extensao": extensao,
@@ -1402,6 +1583,7 @@ def iniciar_processamento():
         messagebox.showerror("Erro", "Nao foi possivel conectar ao OpenAI. A fila ficou salva para retomar depois.")
         return
     log("Iniciando processamento protegido...")
+    tempo_inicio_processamento = time.time()
     total = len(arquivos_encontrados)
     processados = 0
     duplicados = 0
@@ -1429,6 +1611,11 @@ def iniciar_processamento():
             atualizar_metricas(total, processados, duplicados, erros)
             continue
 
+        chave_numeracao = formatar_chave_numeracao(caminho)
+        caracteristica_cor = detectar_caracteristica_cor(caminho)
+        if caracteristica_cor != "desconhecida":
+            log(f"   Variacao de cor: {caracteristica_cor}.")
+
         hash_sha256 = calcular_hash_sha256(caminho)
         if not hash_sha256:
             erros += 1
@@ -1446,11 +1633,14 @@ def iniciar_processamento():
         if phash_str:
             doc_similar = consultar_phash_similar(phash_str, limite_distancia=5)
             if doc_similar:
-                remover_pendencia(hash_sha256)
-                log("   DUPLICATA VISUAL (pHash similar). Pulando.")
-                duplicados += 1
-                atualizar_metricas(total, processados, duplicados, erros)
-                continue
+                if deve_manter_colorida_com_pb_existente(doc_similar, chave_numeracao, caracteristica_cor):
+                    log("   Variacao colorida encontrada para item que existia em PB. Mantendo para upload.")
+                else:
+                    remover_pendencia(hash_sha256)
+                    log("   DUPLICATA VISUAL (pHash similar). Pulando.")
+                    duplicados += 1
+                    atualizar_metricas(total, processados, duplicados, erros)
+                    continue
         else:
             log("   Nao foi possivel calcular pHash.")
 
@@ -1462,7 +1652,7 @@ def iniciar_processamento():
             temp_uuid = str(uuid.uuid4())
             imagem_convertida_temp = os.path.join(os.path.dirname(caminho), f"temp_{temp_uuid}.jpg")
             log(f"   Convertendo {extensao} para JPG...")
-            if converter_para_jpg(caminho, imagem_convertida_temp, densidade=300, qualidade=90):
+            if converter_para_jpg(caminho, imagem_convertida_temp):
                 fonte_visualizacao = imagem_convertida_temp
                 arquivos_temp.append(imagem_convertida_temp)
                 log("   Conversao concluida.")
@@ -1531,9 +1721,6 @@ def iniciar_processamento():
                     os.remove(temp)
             atualizar_metricas(total, processados, duplicados, erros)
             continue
-        url_visualizacao = url_thumbnail
-        destino_visualizacao = destino_thumbnail
-
         destino_original = f"acervo-visual-unificado/originals/{tipo_arquivo_original}/{origem}/{ano}/{nome_amigavel}{extensao}"
         log(f"   Upload original: {destino_original}")
         url_original = fazer_upload_imagem(caminho, destino_original)
@@ -1552,17 +1739,16 @@ def iniciar_processamento():
 
         tamanho_mb = round(os.path.getsize(caminho) / (1024 * 1024), 2)
         dados_documento = {
-            "uuid": uuid_img,
-            "codigo": uuid_img,
             "nome_amigavel": nome_amigavel,
             "nome_original": nome,
-            "url_visualizacao": url_visualizacao,
             "url_thumbnail": url_thumbnail,
             "url_original": url_original,
-            "storage_visualizacao": destino_visualizacao,
             "storage_thumbnail": destino_thumbnail,
             "storage_original": destino_original,
             "origem": origem,
+            "chave_numeracao": chave_numeracao,
+            "caracteristica_cor": caracteristica_cor,
+            "eh_preto_e_branco": caracteristica_cor == "preto_e_branco",
             "tipo_arquivo_original": tipo_arquivo_original,
             "sha256": hash_sha256,
             "phash": phash_str if phash_str else "",
@@ -1594,14 +1780,24 @@ def iniciar_processamento():
 
         atualizar_metricas(total, processados, duplicados, erros)
         time.sleep(0.3)
+        if globals().get("PARAR_PROCESSAMENTO", False):
+            apagar_fila_processamento()
+            globals()["PARAR_PROCESSAMENTO"] = False
+            log("Processamento parado. Fila de processamento apagada.")
+            return
 
     atualizar_checkpoint_processamento(total, completed=True)
     progresso['value'] = 100
     log("Processamento finalizado.")
+    tempo_total = formatar_duracao(time.time() - tempo_inicio_processamento)
     log(f"   Processados: {processados}")
     log(f"   Duplicados: {duplicados}")
     log(f"   Erros/Pendencias: {erros}")
-    messagebox.showinfo("Concluido", f"Processados: {processados}\nDuplicados: {duplicados}\nErros/Pendencias: {erros}")
+    log(f"   Tempo total: {tempo_total}")
+    if callable(mostrar_resultado_processamento):
+        mostrar_resultado_processamento(processados, duplicados, erros, tempo_total)
+    else:
+        messagebox.showinfo("Concluido", f"Processados: {processados}\nDuplicados: {duplicados}\nErros/Pendencias: {erros}\nTempo: {tempo_total}")
 
 frame_botoes = tk.Frame(janela)
 frame_botoes.pack(pady=5)
