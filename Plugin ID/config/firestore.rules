@@ -79,15 +79,5 @@ service cloud.firestore {
       allow delete: if isCorporateUser() && source != 'default';
     }
 
-    match /acervo-visual-unificado/default/counters/{year} {
-      allow read: if isCorporateUser();
-
-      // Permite criar o contador em 0 ou incrementar exatamente +1.
-      allow write: if isCorporateUser()
-        && (
-          (resource == null && request.resource.data.value == 0) ||
-          (resource != null && request.resource.data.value == resource.data.value + 1)
-        );
-    }
   }
 }

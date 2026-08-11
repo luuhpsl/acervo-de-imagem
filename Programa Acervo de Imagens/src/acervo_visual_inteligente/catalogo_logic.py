@@ -53,7 +53,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # Caminhos no Firestore
 COLLECTION_PATH = "acervo-visual-unificado/default/images"
-COUNTERS_COLLECTION = "acervo-visual-unificado/default/counters"
 
 # Prefixos aceitos
 PREFIXOS_ACEITOS = ('shutterstock_', 'envato-', 'pexels', 'freestock')
@@ -370,36 +369,6 @@ def consultar_phash_similar(phash_str, limite_distancia=5):
         return None
     except Exception:
         return None
-
-def obter_proximo_codigo(ano):
-    if not token_usuario:
-        return 1
-    doc_path = f"{COUNTERS_COLLECTION}/{ano}"
-    url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{doc_path}"
-    headers = {"Authorization": f"Bearer {token_usuario}"}
-    try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            current = int(data['fields']['value']['integerValue'])
-            novo_valor = current + 1
-        else:
-            create_body = {"fields": {"value": {"integerValue": 0}}}
-            create_url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{COUNTERS_COLLECTION}?documentId={ano}"
-            create_headers = {**headers, "Content-Type": "application/json"}
-            create_resp = requests.post(create_url, headers=create_headers, json=create_body)
-            if create_resp.status_code not in (200, 201):
-                return 1
-            novo_valor = 1
-        update_body = {"fields": {"value": {"integerValue": novo_valor}}}
-        update_url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{doc_path}?updateMask.fieldPaths=value"
-        update_headers = {**headers, "Content-Type": "application/json"}
-        update_resp = requests.patch(update_url, headers=update_headers, json=update_body)
-        if update_resp.status_code not in (200, 201):
-            return 1
-        return novo_valor
-    except Exception:
-        return 1
 
 def gerar_codigo_acervo(ano):
     ano_curto = str(ano or datetime.now().year)[-2:]
@@ -786,6 +755,11 @@ def testar_openai():
         Gere exatamente 15 termos no campo keywords. Os 10 primeiros termos devem ser em
         portugues e os 5 ultimos em ingles. Nao separe por idioma; mantenha tudo em uma
         unica lista. Evite termos repetidos, traducoes diretas excessivas e ideias duplicadas.
+        Termos tecnicos, siglas, nomes de tecnologias e palavras amplamente usadas em ingles
+        tambem no portugues devem ser mantidos na forma original, como CPU, hardware, software,
+        notebook, login, upload, download, dashboard, layout e mockup. Nao duplique o mesmo
+        conceito em portugues e ingles quando o termo original ja for o uso natural nos dois
+        idiomas; nesses casos, escolha outro termo complementar relevante.
         """
         resposta = chamar_openai_chat({
             "model": "gpt-4o-mini",
