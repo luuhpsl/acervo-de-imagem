@@ -1,0 +1,93 @@
+rules_version = '2';
+// Cole este conteudo em: Firebase Console > Firestore Database > Regras.
+//
+// Regras do Acervo Visual Unificado.
+// Permite leitura, criacao e limpeza de registros apenas para usuarios
+// autenticados, com e-mail verificado, do dominio corporativo @vitru.com.br.
+//
+// Estrutura principal:
+// acervo-visual-unificado/default/images/{imageId}
+//
+// O imageId deve ser o mesmo UUID usado como pasta no Storage:
+// acervo-visual-unificado/assets/{imageId}/...
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isCorporateUser() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('.*@vitru[.]com[.]br$');
+    }
+
+    function isValidNewAsset(imageId) {
+      return request.resource.data.keys().hasAll([
+          'asset_code',
+          'original_name',
+          'sha256',
+          'url_original',
+          'url_medium',
+          'url_thumb'
+        ]);
+    }
+
+    function isValidLegacyAsset(imageId) {
+      return request.resource.data.keys().hasAll([
+          'uuid',
+          'codigo',
+          'sha256',
+          'sheet_synced'
+        ])
+        && request.resource.data.uuid == imageId;
+    }
+
+    match /acervo-visual-unificado/default/images/{imageId} {
+      allow read: if isCorporateUser();
+
+      // Aceita o schema novo do acervo e tambem o schema legado,
+      // para nao quebrar documentos antigos durante a transicao.
+      allow create: if isCorporateUser()
+        && (isValidNewAsset(imageId) || isValidLegacyAsset(imageId));
+
+      // Atualizacao continua restrita. Hoje o programa normalmente cria
+      // documentos novos; update fica reservado para reconciliacoes futuras.
+      allow update: if isCorporateUser()
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sheet_synced']) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['url_original', 'url_medium', 'url_thumb'])
+        );
+
+      // Necessario para a regra de substituicao visual:
+      // quando um arquivo melhor substitui outro parecido, o programa apaga
+      // o documento antigo somente depois que o novo upload e Firestore deram certo.
+      allow delete: if isCorporateUser();
+    }
+
+    // Caminho legado por origem, mantido apenas para compatibilidade.
+    match /acervo-visual-unificado/{source}/images/{imageId} {
+      allow read: if isCorporateUser() && source != 'default';
+
+      allow create: if isCorporateUser()
+        && source != 'default'
+        && request.resource.data.keys().hasAll(['uuid', 'codigo', 'sha256', 'sheet_synced', 'origem'])
+        && request.resource.data.uuid == imageId
+        && request.resource.data.origem == source;
+
+      allow update: if isCorporateUser()
+        && source != 'default'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sheet_synced']);
+
+      allow delete: if isCorporateUser() && source != 'default';
+    }
+
+    match /acervo-visual-unificado/default/counters/{year} {
+      allow read: if isCorporateUser();
+
+      // Permite criar o contador em 0 ou incrementar exatamente +1.
+      allow write: if isCorporateUser()
+        && (
+          (resource == null && request.resource.data.value == 0) ||
+          (resource != null && request.resource.data.value == resource.data.value + 1)
+        );
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "supportedExtensions": ["jpg", "jpeg", "png", "eps", "ai", "svg"],
+  "ignoredNamePatterns": ["^QR\\s*Code"],
+  "storageStructure": {
+    "thumbnails": "acervo-visual-unificado/thumbnails/{origem}/{ano}/IMG-{ano}-{id}.jpg",
+    "originalRaster": "acervo-visual-unificado/originals/raster/{origem}/{ano}/IMG-{ano}-{id}.{extensao}",
+    "originalVector": "acervo-visual-unificado/originals/vector/{origem}/{ano}/IMG-{ano}-{id}.{extensao}"
+  },
+  "providers": ["shutterstock", "envato", "pexels", "freepik", "outros"],
+  "preview": {
+    "generateBeforeShowingTable": true,
+    "thumbnailFormat": "jpg"
+  }
+}

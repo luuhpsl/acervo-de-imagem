@@ -1,5 +1,7 @@
 # Ambientes e Dependências
 .venv/
+.venv*/
+venv/
 
 # Caches do Python e Ferramentas
 __pycache__/
@@ -15,6 +17,12 @@ coverage.xml
 *.spec
 build/
 dist/
+executavel/
+*.dist/
+*.build/
+*.onefile-build/
+nuitka_cache/
+nuitka-crash-report.xml
 
 # Skills geradas (cópias sincronizadas)
 .claude/
@@ -33,6 +41,9 @@ firebase-debug.log
 # Dados locais do app
 pending_metadata.json
 processing_queue.json
+
+# Arquivos movidos para quarentena/local, nao devem ir para o GitHub
+Outros/
 
 # OS
 .DS_Store

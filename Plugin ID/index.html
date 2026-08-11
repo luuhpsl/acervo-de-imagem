@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Acervo de Imagens</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="./index.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="header">
+      <div class="header-left">
+        <p class="eyebrow">Plug-in InDesign <span class="version-badge">v0.2.0</span></p>
+        <h1>Acervo de Imagens</h1>
+        <p class="subtitle">Selecione quais links do documento devem entrar no acervo.</p>
+        <div class="header-login">
+          <div id="loginButton" class="action-button primary" role="button" tabindex="0">Login</div>
+          <div id="logoutButton" class="action-button disabled" role="button" tabindex="0" aria-disabled="true">Sair</div>
+          <span id="userEmailText" class="login-email"></span>
+          <span id="loginStatus" class="login-status locked">Não autenticado</span>
+        </div>
+      </div>
+      <div id="themeToggle" class="action-button theme-toggle" role="button" tabindex="0">☀</div>
+    </header>
+
+    <section class="toolbar" aria-label="Ações do plug-in">
+      <div id="scanButton" class="action-button primary disabled" role="button" tabindex="0" aria-disabled="true">🔎 Varrer documento</div>
+      <div id="selectAllButton" class="action-button" role="button" tabindex="0">Selecionar todos</div>
+      <div id="clearSelectionButton" class="action-button" role="button" tabindex="0">Limpar seleção</div>
+      <div id="uploadButton" class="action-button send disabled" role="button" tabindex="0" aria-disabled="true">Enviar selecionados</div>
+    </section>
+
+    <section class="stats" aria-label="Métricas">
+      <article>
+        <span>Encontrados</span>
+        <strong id="foundCount">0</strong>
+      </article>
+      <article>
+        <span>Selecionados</span>
+        <strong id="selectedCount">0</strong>
+      </article>
+      <article>
+        <span>Duplicados</span>
+        <strong id="duplicateCount">0</strong>
+      </article>
+      <article>
+        <span>Erros</span>
+        <strong id="errorCount">0</strong>
+      </article>
+    </section>
+
+    <section class="table-section">
+      <div class="table-header">
+        <h2>Imagens do documento</h2>
+        <span id="documentName">Nenhum documento lido</span>
+      </div>
+
+      <div id="loadingPanel" class="loading-panel hidden">
+        <div class="loading-content">
+          <div class="loading-row">
+            <strong id="loadingTitle">Preparando miniaturas...</strong>
+            <span id="loadingText">Aguarde um instante.</span>
+          </div>
+          <div class="mini-progress-track">
+            <div id="loadingFill" class="mini-progress-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="check-col">Subir</th>
+              <th class="preview-col">Miniatura</th>
+              <th>Arquivo</th>
+            </tr>
+          </thead>
+          <tbody id="assetTableBody">
+            <tr class="empty-row">
+              <td colspan="3">Clique em “Varrer documento” para listar os links do InDesign.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="log-section">
+      <h2>Log do Processo</h2>
+      <div id="logPanel" class="log-panel" aria-live="polite"></div>
+    </section>
+
+    <section class="progress-wrap" aria-label="Progresso">
+      <div class="progress-track">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+      <p id="progressText">Progresso: 0% | Tempo: 00:00:00</p>
+    </section>
+  </main>
+</body>
+</html>

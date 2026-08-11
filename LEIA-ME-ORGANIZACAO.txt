@@ -1,0 +1,26 @@
+ORGANIZAÇÃO DA PASTA DO PROJETO
+
+Esta pasta é o ponto central do projeto Acervo de Imagens.
+
+Pastas principais:
+
+1. Programa Acervo de Imagens
+   Contém o programa desktop principal, arquivos Python, ícones, fontes,
+   regras Firebase, credenciais locais, token local e executáveis gerados.
+
+2. Plugin ID
+   Contém o plug-in do Adobe InDesign.
+
+3. GitHub
+   Contém arquivos de documentação, configuração de repositório,
+   testes, scripts e materiais de publicação/versionamento.
+
+4. Outros
+   Contém arquivos auxiliares, backups, ambiente virtual antigo,
+   caches, logs e testes soltos.
+
+Observação importante:
+
+A pasta .git permanece na raiz por necessidade técnica.
+Se ela for movida para dentro de outra pasta, o Git deixa de reconhecer
+esta pasta como repositório.

@@ -1,0 +1,42 @@
+{
+  "manifestVersion": 5,
+  "id": "br.com.vitru.acervo.indesign",
+  "name": "Acervo de Imagens",
+  "version": "0.2.0",
+  "main": "index.html",
+  "host": {
+    "app": "ID",
+    "minVersion": "18.5.0"
+  },
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "acervoPanel",
+      "label": {
+        "default": "Acervo de Imagens v0.2.0"
+      },
+      "minimumSize": {
+        "width": 520,
+        "height": 520
+      },
+      "preferredDockedSize": {
+        "width": 620,
+        "height": 720
+      },
+      "preferredFloatingSize": {
+        "width": 880,
+        "height": 760
+      }
+    }
+  ],
+  "requiredPermissions": {
+    "localFileSystem": "fullAccess",
+    "launchProcess": {
+      "extensions": [".vbs", ".cmd", ".bat", ".url"],
+      "schemes": ["http", "https"]
+    },
+    "network": {
+      "domains": "all"
+    }
+  }
+}

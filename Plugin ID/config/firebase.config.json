@@ -1,0 +1,13 @@
+{
+  "firebase": {
+    "projectId": "uniasselvi-digital",
+    "storageBucket": "uniasselvi-digital.appspot.com",
+    "firestoreCollectionPath": "acervo-visual-unificado/default/images",
+    "storageRoot": "acervo-visual-unificado"
+  },
+  "auth": {
+    "tokenFile": "runtime/token.json",
+    "tokenExampleFile": "runtime/token.example.json",
+    "tokenAcceptedKeys": ["token", "idToken", "id_token"]
+  }
+}

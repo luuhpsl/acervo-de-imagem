@@ -13,6 +13,16 @@ service firebase.storage {
         && request.auth.token.email.matches('.*@vitru[.]com[.]br$');
     }
 
+    // Estrutura nova: uma pasta por ativo, identificada pelo mesmo UUID
+    // usado no documento do Firestore. Dentro dela ficam:
+    // original.{extensao}, medium.jpg e thumb.jpg.
+    match /acervo-visual-unificado/assets/{assetId}/{fileName} {
+      allow read: if isCorporateUser();
+      allow write: if isCorporateUser()
+        && request.resource.size < 200 * 1024 * 1024;
+    }
+
+    // Caminhos legados, mantidos para arquivos/documentos antigos ja existentes.
     // Miniaturas JPG leves para visualizacao no acervo/site.
     match /acervo-visual-unificado/thumbnails/{source}/{year}/{fileName} {
       allow read: if isCorporateUser();
@@ -34,7 +44,6 @@ service firebase.storage {
         && request.resource.size < 200 * 1024 * 1024;
     }
 
-    // Caminho legado, mantido para arquivos/documentos antigos ja existentes.
     match /acervo-visual-unificado/images/{year}/{uuid}/{fileName} {
       allow read: if isCorporateUser();
       allow write: if isCorporateUser()

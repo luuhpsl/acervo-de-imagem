@@ -12,6 +12,13 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageOps
 
 try:
+    from acervo_visual_inteligente.env_config import load_local_env
+except Exception:
+    from env_config import load_local_env
+
+load_local_env()
+
+try:
     from acervo_visual_inteligente import __version__
 except Exception:
     __version__ = "2.0.10"
@@ -1138,6 +1145,12 @@ class CatalogoLayout:
             if not usuarios:
                 return None
             usuario = usuarios[0]
+            email = usuario.get("email", "")
+            if not email:
+                for provider in usuario.get("providerUserInfo", []):
+                    email = provider.get("email", "") or provider.get("rawId", "")
+                    if email:
+                        break
             photo_url = usuario.get("photoUrl", "")
             if not photo_url:
                 for provider in usuario.get("providerUserInfo", []):
@@ -1145,7 +1158,7 @@ class CatalogoLayout:
                     if photo_url:
                         break
             return {
-                "email": usuario.get("email", ""),
+                "email": email,
                 "display_name": usuario.get("displayName", ""),
                 "photo_url": photo_url,
             }
