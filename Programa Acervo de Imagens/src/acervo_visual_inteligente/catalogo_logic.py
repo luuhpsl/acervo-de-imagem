@@ -52,7 +52,7 @@ STORAGE_BUCKET = "uniasselvi-digital.appspot.com"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # Caminhos no Firestore
-COLLECTION_PATH = "acervo-visual-unificado/default/images"
+COLLECTION_PATH = "acervo-visual-unificado"
 
 # Prefixos aceitos
 PREFIXOS_ACEITOS = ('shutterstock_', 'envato-', 'pexels', 'freestock')
@@ -60,6 +60,7 @@ PREFIXOS_ACEITOS = ('shutterstock_', 'envato-', 'pexels', 'freestock')
 # ExtensÃµes permitidas (incluindo EPS e AI)
 EXTENSOES_PERMITIDAS = ('.jpg', '.jpeg', '.png', '.ai', '.eps', '.svg')
 EXTENSOES_VETORIAIS = ('.eps', '.ai', '.svg')
+LARGE_MAX_SIZE = (2400, 2400)
 MEDIUM_MAX_SIZE = (1600, 1600)
 THUMBNAIL_MAX_SIZE = (400, 400)
 VECTOR_PREVIEW_MAX_SIZE = (2000, 2000)
@@ -467,14 +468,20 @@ def obter_caminhos_storage_documento(doc):
             caminhos.append(caminho)
 
     doc_id = obter_id_documento_firestore(doc)
-    asset_code = obter_string_firestore(doc, "asset_code") or obter_string_firestore(doc, "codigo") or obter_string_firestore(doc, "nome_amigavel")
     extensao = obter_extensao_firestore(doc)
-    if doc_id and asset_code and extensao:
-        pasta = f"acervo-visual-unificado/assets/{doc_id}"
+    if doc_id and extensao:
+        pasta = f"acervo-visual-unificado/{doc_id}"
+        pasta_legacy = f"acervo-visual-unificado/assets/{doc_id}"
+        asset_code = obter_string_firestore(doc, "asset_code") or obter_string_firestore(doc, "codigo") or obter_string_firestore(doc, "nome_amigavel") or doc_id
         caminhos_novos = [
-            f"{pasta}/{asset_code}_original.{extensao}",
-            f"{pasta}/{asset_code}_medium.jpg",
-            f"{pasta}/{asset_code}_thumb.jpg",
+            f"{pasta}/{doc_id}_original.{extensao}",
+            f"{pasta}/{doc_id}_large.jpg",
+            f"{pasta}/{doc_id}_medium.jpg",
+            f"{pasta}/{doc_id}_thumb.jpg",
+            f"{pasta_legacy}/{asset_code}_original.{extensao}",
+            f"{pasta_legacy}/{asset_code}_large.jpg",
+            f"{pasta_legacy}/{asset_code}_medium.jpg",
+            f"{pasta_legacy}/{asset_code}_thumb.jpg",
         ]
         for caminho in caminhos_novos:
             if caminho not in caminhos:
@@ -728,11 +735,10 @@ def testar_openai():
         {
             "knowledge_area": "uma das areas controladas",
             "visual_type": "um dos tipos visuais controlados",
-            "predominant_colors_pt": ["cor1", "cor2", "cor3", "cor4", "cor5"],
-            "predominant_colors_en": ["color1", "color2", "color3", "color4", "color5"],
+            "colors": ["cor1", "cor2", "cor3", "cor4", "cor5", "color1", "color2", "color3", "color4", "color5"],
             "description": "descricao acessivel, objetiva e factual em portugues",
             "keywords": ["15 termos no total"],
-            "orientation": "paisagem, retrato ou quadrado"
+            "orientation": "paisagem, retrato, quadrado ou panoramica"
         }
 
         Areas controladas para knowledge_area:
@@ -755,11 +761,24 @@ def testar_openai():
         Gere exatamente 15 termos no campo keywords. Os 10 primeiros termos devem ser em
         portugues e os 5 ultimos em ingles. Nao separe por idioma; mantenha tudo em uma
         unica lista. Evite termos repetidos, traducoes diretas excessivas e ideias duplicadas.
+        Nao use o mesmo conceito em dois idiomas, por exemplo: nao use "vetor" e "vector",
+        "ilustracao" e "illustration", "grafico" e "graphic", "arte" e "art" no mesmo retorno.
         Termos tecnicos, siglas, nomes de tecnologias e palavras amplamente usadas em ingles
         tambem no portugues devem ser mantidos na forma original, como CPU, hardware, software,
         notebook, login, upload, download, dashboard, layout e mockup. Nao duplique o mesmo
         conceito em portugues e ingles quando o termo original ja for o uso natural nos dois
         idiomas; nesses casos, escolha outro termo complementar relevante.
+
+        Regras de orientation:
+        Use exclusivamente uma destas quatro opcoes: paisagem, retrato, quadrado ou panoramica.
+        Use panoramica apenas quando a imagem for muito mais larga do que alta.
+
+        Padronizacao dos campos controlados:
+        Para knowledge_area, visual_type, colors, keywords e orientation,
+        retorne os valores sem acento, em letras minusculas e com
+        hifen no lugar de espacos. Exemplo: "Ciencias Humanas" deve virar
+        "ciencias-humanas"; "sala de aula" deve virar "sala-de-aula".
+        A description deve permanecer em texto corrido normal, com acentos quando necessario.
         """
         resposta = chamar_openai_chat({
             "model": "gpt-4o-mini",
@@ -852,20 +871,62 @@ def analisar_imagem_com_openai(caminho_imagem):
             mime_type = "image/jpeg"
         
         prompt = """
-        Analise esta imagem e retorne APENAS um JSON vÃ¡lido com os seguintes campos:
+        Analise esta imagem e retorne APENAS um JSON valido, sem texto adicional.
+
+        Campos obrigatorios:
         {
-            "tipo_imagem": "ex: fotografia, ilustraÃ§Ã£o, vetor, etc",
-            "elementos_visuais": "descreva os principais elementos visuais",
-            "estilo_tecnica": "ex: realista, abstrato, aquarela, 3D, etc",
-            "formato": "ex: retrato, paisagem, quadrado, etc",
-            "cores_predominantes": "liste as 3-5 cores principais em portuguÃªs",
-            "area_conhecimento": "ex: natureza, tecnologia, saÃºde, educaÃ§Ã£o, etc",
-            "caracteristicas": "caracterÃ­sticas marcantes da imagem",
-            "palavras_chave_pt": ["palavra1", "palavra2", ..., "palavra10"],
-            "palavras_chave_en": ["keyword1", "keyword2", ..., "keyword10"],
-            "descricao_detalhada": "descriÃ§Ã£o rica e detalhada em portuguÃªs"
+            "knowledge_area": "uma das areas controladas",
+            "visual_type": "um dos tipos visuais controlados",
+            "colors": ["cor1", "cor2", "cor3", "cor4", "cor5", "color1", "color2", "color3", "color4", "color5"],
+            "description": "descricao acessivel, objetiva e factual em portugues",
+            "keywords": ["15 termos no total"],
+            "orientation": "paisagem, retrato, quadrado ou panoramica"
         }
-        Certifique-se de incluir EXATAMENTE 10 palavras-chave em cada lista.
+
+        Areas controladas para knowledge_area:
+        Ciencias da Saude; Ciencias Biologicas; Exatas e da terra; Ciencias Humanas;
+        Ciencias Sociais Aplicadas; Engenharias; Linguagens; Ciencias Agrarias;
+        Direito; Gastronomia; Linguistica Letras e Artes; Producao Cultural e Design.
+
+        Tipos controlados para visual_type:
+        Fotografia; Ilustracao; Arte vetorial; Infografico; Diagrama ou fluxograma;
+        Grafico de dados; Tabela ou matriz; Mapa; Interface digital; Mockup;
+        Textura ou padrao; Produto ou objeto isolado; Cena 3D.
+
+        Regras da description:
+        Comece informando o tipo visual e o assunto principal. Descreva apenas o que e visivel,
+        sem interpretacoes subjetivas. Inclua elementos principais, posicao, cores, luz,
+        profundidade e textos visiveis, se houver. Textos visiveis devem ficar entre aspas.
+        Use texto corrido, claro, acessivel e moderado em tamanho.
+
+        Regras de colors:
+        Gere ate 10 cores predominantes no campo colors. As 5 primeiras devem ser em portugues
+        e as 5 ultimas em ingles. Nao separe por idioma; mantenha tudo em uma unica lista.
+        Evite repeticoes e traducoes desnecessarias quando o termo for igual ou amplamente
+        usado nos dois idiomas.
+
+        Regras de keywords:
+        Gere exatamente 15 termos no campo keywords. Os 10 primeiros termos devem ser em
+        portugues e os 5 ultimos em ingles. Nao separe por idioma; mantenha tudo em uma
+        unica lista. Evite termos repetidos, traducoes diretas excessivas e ideias duplicadas.
+        Nao use o mesmo conceito em dois idiomas, por exemplo: nao use "vetor" e "vector",
+        "ilustracao" e "illustration", "grafico" e "graphic", "arte" e "art" no mesmo retorno.
+        Termos tecnicos, siglas, nomes de tecnologias e palavras amplamente usadas em ingles
+        tambem no portugues devem ser mantidos na forma original, como CPU, hardware, software,
+        notebook, login, upload, download, dashboard, layout e mockup. Nao duplique o mesmo
+        conceito em portugues e ingles quando o termo original ja for o uso natural nos dois
+        idiomas; nesses casos, escolha outro termo complementar relevante.
+
+        Regras de orientation:
+        Use exclusivamente uma destas quatro opcoes: paisagem, retrato, quadrado ou panoramica.
+        Use panoramica apenas quando a imagem for muito mais larga do que alta.
+
+        Padronizacao dos campos controlados:
+        Para knowledge_area, visual_type, colors, keywords e orientation,
+        retorne os valores sem acento, em letras minusculas e com hifen no lugar de espacos.
+        Exemplo: "Ciencias Humanas" deve virar "ciencias-humanas"; "sala de aula" deve virar
+        "sala-de-aula". A description deve permanecer em texto corrido normal, com acentos
+        quando necessario.
         """
         resposta = chamar_openai_chat({
             "model": "gpt-4o-mini",
@@ -910,8 +971,185 @@ def normalizar_lista_metadado(valor, limite=None):
         itens = []
     return itens[:limite] if limite else itens
 
-def montar_resolucoes(original, medium, thumb):
-    return f"original: {original}; medium: {medium}; thumb: {thumb}"
+def slug_metadado(valor):
+    texto = str(valor or "").strip().lower()
+    if not texto:
+        return ""
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"[^a-z0-9]+", "-", texto)
+    return texto.strip("-")
+
+def normalizar_lista_slug(valor, limite=None):
+    itens = [slug_metadado(item) for item in normalizar_lista_metadado(valor, limite)]
+    itens = [item for item in itens if item]
+    return itens[:limite] if limite else itens
+
+def chave_conceito_keyword(keyword):
+    slug = slug_metadado(keyword)
+    equivalencias = {
+        "vector": "vetor",
+        "vetor": "vetor",
+        "illustration": "ilustracao",
+        "ilustracao": "ilustracao",
+        "graphic": "grafico",
+        "grafico": "grafico",
+        "graph": "grafico",
+        "art": "arte",
+        "arte": "arte",
+        "technology": "tecnologia",
+        "tecnologia": "tecnologia",
+        "computer": "computador",
+        "computador": "computador",
+        "equipment": "equipamento",
+        "equipamento": "equipamento",
+        "industry": "industria",
+        "industria": "industria",
+        "education": "educacao",
+        "educacao": "educacao",
+        "health": "saude",
+        "saude": "saude",
+        "food": "alimento",
+        "alimento": "alimento",
+        "business": "negocios",
+        "negocios": "negocios",
+        "person": "pessoa",
+        "pessoa": "pessoa",
+        "people": "pessoas",
+        "pessoas": "pessoas",
+    }
+    return equivalencias.get(slug, slug)
+
+def normalizar_keywords_metadados(valor, limite=15):
+    keywords = []
+    vistos = set()
+    for item in normalizar_lista_metadado(valor):
+        slug = slug_metadado(item)
+        if not slug:
+            continue
+        chave = chave_conceito_keyword(slug)
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        keywords.append(slug)
+        if limite and len(keywords) >= limite:
+            break
+    return keywords
+
+def normalizar_orientacao_metadado(valor, largura=0, altura=0):
+    orientacao = slug_metadado(valor)
+    aliases = {
+        "horizontal": "paisagem",
+        "landscape": "paisagem",
+        "paisagem": "paisagem",
+        "vertical": "retrato",
+        "portrait": "retrato",
+        "retrato": "retrato",
+        "square": "quadrado",
+        "quadrado": "quadrado",
+        "panorama": "panoramica",
+        "panoramic": "panoramica",
+        "panoramica": "panoramica",
+    }
+    if orientacao in aliases:
+        return aliases[orientacao]
+
+    try:
+        largura = int(largura or 0)
+        altura = int(altura or 0)
+    except Exception:
+        largura = 0
+        altura = 0
+
+    if largura <= 0 or altura <= 0:
+        return ""
+
+    proporcao = largura / altura
+    if 0.9 <= proporcao <= 1.1:
+        return "quadrado"
+    if proporcao >= 2.0:
+        return "panoramica"
+    if proporcao > 1:
+        return "paisagem"
+    return "retrato"
+
+def normalizar_cores_metadados(metadados, limite=10):
+    cores = []
+    for campo in ("colors", "predominant_colors", "cores_predominantes", "predominant_colors_pt", "predominant_colors_en"):
+        valor = metadados.get(campo, []) if isinstance(metadados, dict) else []
+        cores.extend(normalizar_lista_metadado(valor))
+
+    cores_normalizadas = []
+    vistos = set()
+    for cor in cores:
+        cor_slug = slug_metadado(cor)
+        if not cor_slug or cor_slug in vistos:
+            continue
+        vistos.add(cor_slug)
+        cores_normalizadas.append(cor_slug)
+        if limite and len(cores_normalizadas) >= limite:
+            break
+    return cores_normalizadas
+
+def montar_resolucoes(original, large=None, medium=None, thumb=None):
+    if thumb is None:
+        return f"original: {original}; medium: {large}; thumb: {medium}"
+    return f"original: {original}; large: {large}; medium: {medium}; thumb: {thumb}"
+
+def obter_dimensoes_arquivo(caminho):
+    try:
+        with Image.open(caminho) as img:
+            return int(img.width), int(img.height)
+    except Exception:
+        return 0, 0
+
+def montar_info_arquivo(url, caminho):
+    largura, altura = obter_dimensoes_arquivo(caminho)
+    return {
+        "url": url or "",
+        "size_bytes": os.path.getsize(caminho) if caminho and os.path.exists(caminho) else 0,
+        "width": largura,
+        "height": altura
+    }
+
+def obter_map_firestore(doc, campo):
+    fields = doc.get("fields", {}) if isinstance(doc, dict) else {}
+    valor = fields.get(campo, {})
+    if not isinstance(valor, dict):
+        return {}
+    return valor.get("mapValue", {}).get("fields", {})
+
+def obter_valor_firestore_typed(valor):
+    if not isinstance(valor, dict):
+        return ""
+    if "stringValue" in valor:
+        return valor["stringValue"]
+    if "integerValue" in valor:
+        try:
+            return int(valor["integerValue"])
+        except Exception:
+            return valor["integerValue"]
+    if "doubleValue" in valor:
+        try:
+            return float(valor["doubleValue"])
+        except Exception:
+            return valor["doubleValue"]
+    if "booleanValue" in valor:
+        return bool(valor["booleanValue"])
+    if "arrayValue" in valor:
+        return ", ".join(
+            str(obter_valor_firestore_typed(v))
+            for v in valor["arrayValue"].get("values", [])
+        )
+    return ""
+
+def obter_file_firestore(doc, versao, campo):
+    files = obter_map_firestore(doc, "files")
+    versao_map = files.get(versao, {})
+    if not isinstance(versao_map, dict):
+        return ""
+    campos_versao = versao_map.get("mapValue", {}).get("fields", {})
+    return obter_valor_firestore_typed(campos_versao.get(campo, {}))
 
 # ============================================================
 # EXPORTAÃ‡ÃƒO PARA EXCEL
@@ -946,10 +1184,10 @@ def exportar_para_excel():
             "Data de Processamento", "Origem"
         ]
         cabecalhos = [
-            "Asset Code", "Nome Original", "Area do Conhecimento", "Tipo Visual",
-            "Cores PT", "Cores EN", "Descricao", "Keywords", "Extensao",
+            "Nome Original", "Area do Conhecimento", "Tipo Visual",
+            "Cores", "Descricao", "Keywords", "Extensao",
             "Orientacao", "Data de Processamento", "Origem", "pHash", "SHA-256",
-            "Tamanho (bytes)", "Resolucoes", "URL Original", "URL Medium", "URL Thumb"
+            "Tamanho (bytes)", "Resolucoes", "URL Original", "URL Large", "URL Medium", "URL Thumb"
         ]
         ws.append(cabecalhos)
         
@@ -958,16 +1196,7 @@ def exportar_para_excel():
             def get_valor(campo):
                 if campo not in campos:
                     return ""
-                valor = campos[campo]
-                if 'stringValue' in valor:
-                    return valor['stringValue']
-                elif 'integerValue' in valor:
-                    return int(valor['integerValue'])
-                elif 'doubleValue' in valor:
-                    return float(valor['doubleValue'])
-                elif 'arrayValue' in valor:
-                    return ", ".join([v['stringValue'] for v in valor['arrayValue'].get('values', [])])
-                return ""
+                return obter_valor_firestore_typed(campos[campo])
             
             linha = [
                 get_valor("nome_original"),
@@ -990,12 +1219,10 @@ def exportar_para_excel():
                 get_valor("origem")
             ]
             linha = [
-                get_valor("asset_code") or get_valor("codigo"),
                 get_valor("original_name") or get_valor("nome_original"),
                 get_valor("knowledge_area") or get_valor("area_conhecimento"),
                 get_valor("visual_type") or get_valor("tipo_imagem"),
-                get_valor("predominant_colors_pt") or get_valor("cores_predominantes"),
-                get_valor("predominant_colors_en"),
+                get_valor("colors") or get_valor("predominant_colors") or get_valor("predominant_colors_pt") or get_valor("cores_predominantes"),
                 get_valor("description") or get_valor("descricao_detalhada"),
                 get_valor("keywords") or get_valor("palavras_chave_pt"),
                 get_valor("extension") or normalizar_extensao(get_valor("extensao")),
@@ -1004,11 +1231,17 @@ def exportar_para_excel():
                 get_valor("source") or get_valor("origem"),
                 get_valor("phash"),
                 get_valor("sha256"),
-                get_valor("size_bytes") or get_valor("tamanho_mb"),
-                get_valor("resolutions") or get_valor("resolucao"),
-                get_valor("url_original"),
-                get_valor("url_medium") or get_valor("url_visualizacao"),
-                get_valor("url_thumb") or get_valor("url_thumbnail")
+                obter_file_firestore(doc, "original", "size_bytes") or get_valor("size_bytes") or get_valor("tamanho_mb"),
+                montar_resolucoes(
+                    f"{obter_file_firestore(doc, 'original', 'width')}x{obter_file_firestore(doc, 'original', 'height')}",
+                    f"{obter_file_firestore(doc, 'large', 'width')}x{obter_file_firestore(doc, 'large', 'height')}",
+                    f"{obter_file_firestore(doc, 'medium', 'width')}x{obter_file_firestore(doc, 'medium', 'height')}",
+                    f"{obter_file_firestore(doc, 'thumb', 'width')}x{obter_file_firestore(doc, 'thumb', 'height')}"
+                ) if obter_file_firestore(doc, "original", "width") else (get_valor("resolutions") or get_valor("resolucao")),
+                obter_file_firestore(doc, "original", "url") or get_valor("url_original"),
+                obter_file_firestore(doc, "large", "url") or get_valor("url_large"),
+                obter_file_firestore(doc, "medium", "url") or get_valor("url_medium") or get_valor("url_visualizacao"),
+                obter_file_firestore(doc, "thumb", "url") or get_valor("url_thumb") or get_valor("url_thumbnail")
             ]
             ws.append(linha)
         
@@ -1193,10 +1426,17 @@ def pixels_do_arquivo(caminho):
         return 0
 
 def obter_pixels_firestore(doc):
+    largura = obter_file_firestore(doc, "original", "width")
+    altura = obter_file_firestore(doc, "original", "height")
+    if largura and altura:
+        try:
+            return int(largura) * int(altura)
+        except Exception:
+            pass
     return pixels_da_resolucao(obter_string_firestore(doc, "resolutions") or obter_string_firestore(doc, "resolucao"))
 
 def obter_tamanho_bytes_firestore(doc):
-    size_bytes = obter_numero_firestore(doc, "size_bytes", 0)
+    size_bytes = obter_file_firestore(doc, "original", "size_bytes") or obter_numero_firestore(doc, "size_bytes", 0)
     if size_bytes:
         return int(size_bytes)
     tamanho_mb = obter_numero_firestore(doc, "tamanho_mb", 0)
@@ -1442,7 +1682,6 @@ def registrar_pendencia(caminho, origem, hash_sha256, phash_str, extensao, motiv
         "origem": origem,
         "chave_numeracao": formatar_chave_numeracao(caminho),
         "caracteristica_cor": detectar_caracteristica_cor(caminho),
-        "eh_preto_e_branco": detectar_caracteristica_cor(caminho) == "preto_e_branco",
         "sha256": hash_sha256 or "",
         "phash": phash_str or "",
         "extensao": extensao,
@@ -1553,6 +1792,9 @@ def escolher_pasta():
 
 def iniciar_processamento_antigo_sem_fila():
     global token_usuario
+    log("Fluxo antigo sem fila redirecionado para o processamento atual.")
+    return iniciar_processamento()
+
     if not arquivos_encontrados:
         messagebox.showerror("Erro", "Selecione uma pasta primeiro.")
         return
@@ -1681,8 +1923,8 @@ def iniciar_processamento_antigo_sem_fila():
 
         log(f"   Ã¢Å“â€¦ AnÃƒÂ¡lise OpenAI concluÃƒÂ­da!")
 
-        destino_pasta = f"acervo-visual-unificado/assets/{uuid_img}"
-        destino_visualizacao = f"{destino_pasta}/{codigo_acervo}_thumb.jpg"
+        destino_pasta = f"acervo-visual-unificado/{uuid_img}"
+        destino_visualizacao = f"{destino_pasta}/{uuid_img}_thumb.jpg"
         log(f"   ðŸ“¤ Upload visualizaÃ§Ã£o: {destino_visualizacao}")
         url_visualizacao = fazer_upload_imagem(imagem_para_analise, destino_visualizacao)
         if not url_visualizacao:
@@ -1695,7 +1937,7 @@ def iniciar_processamento_antigo_sem_fila():
         # --- UPLOAD DO ARQUIVO ORIGINAL (se for EPS/AI) ---
         url_original = None
         if extensao in ('.eps', '.ai'):
-            destino_original = f"{destino_pasta}/{codigo_acervo}_original{extensao}"
+            destino_original = f"{destino_pasta}/{uuid_img}_original{extensao}"
             log(f"   ðŸ“¤ Upload original: {destino_original}")
             url_original = fazer_upload_imagem(caminho, destino_original)
 
@@ -1721,8 +1963,6 @@ def iniciar_processamento_antigo_sem_fila():
             "url_original": url_original,
             "origem": origem,
             "chave_numeracao": chave_numeracao,
-            "caracteristica_cor": caracteristica_cor,
-            "eh_preto_e_branco": caracteristica_cor == "preto_e_branco",
             "sha256": hash_sha256,
             "phash": phash_str if phash_str else "",
             "extensao": extensao,
@@ -1907,6 +2147,16 @@ def iniciar_processamento():
                 atualizar_metricas(total, processados, duplicados, erros)
                 continue
 
+        large_temp = os.path.join(os.path.dirname(caminho), f"large_{uuid.uuid4().hex}.jpg")
+        if not criar_jpg_otimizado(fonte_visualizacao, large_temp, LARGE_MAX_SIZE, qualidade=90):
+            for temp in arquivos_temp:
+                if os.path.exists(temp):
+                    os.remove(temp)
+            erros += 1
+            atualizar_metricas(total, processados, duplicados, erros)
+            continue
+        arquivos_temp.append(large_temp)
+
         medium_temp = os.path.join(os.path.dirname(caminho), f"medium_{uuid.uuid4().hex}.jpg")
         if not criar_jpg_otimizado(fonte_visualizacao, medium_temp, MEDIUM_MAX_SIZE, qualidade=88):
             for temp in arquivos_temp:
@@ -1935,9 +2185,10 @@ def iniciar_processamento():
         else:
             metadados = None
         resolucao_original = obter_resolucao(caminho)
+        resolucao_large = obter_resolucao(large_temp)
         resolucao_medium = obter_resolucao(medium_temp)
         resolucao_thumb = obter_resolucao(thumbnail_temp)
-        resolucao = montar_resolucoes(resolucao_original, resolucao_medium, resolucao_thumb)
+        resolucao = montar_resolucoes(resolucao_original, resolucao_large, resolucao_medium, resolucao_thumb)
 
         if not metadados:
             if openai_disponivel:
@@ -1963,14 +2214,12 @@ def iniciar_processamento():
         log("   Analise OpenAI concluida.")
 
         uuid_img = str(uuid.uuid4())
-        codigo_acervo = gerar_codigo_acervo(ano)
-        nome_amigavel = codigo_acervo
-        tipo_arquivo_original = detectar_tipo_arquivo_original(extensao)
 
-        destino_pasta = f"acervo-visual-unificado/assets/{uuid_img}"
-        destino_thumbnail = f"{destino_pasta}/{codigo_acervo}_thumb.jpg"
-        destino_medium = f"{destino_pasta}/{codigo_acervo}_medium.jpg"
-        destino_original = f"{destino_pasta}/{codigo_acervo}_original{extensao}"
+        destino_pasta = f"acervo-visual-unificado/{uuid_img}"
+        destino_thumbnail = f"{destino_pasta}/{uuid_img}_thumb.jpg"
+        destino_medium = f"{destino_pasta}/{uuid_img}_medium.jpg"
+        destino_large = f"{destino_pasta}/{uuid_img}_large.jpg"
+        destino_original = f"{destino_pasta}/{uuid_img}_original{extensao}"
 
         log(f"   Upload thumb: {destino_thumbnail}")
         url_thumbnail = fazer_upload_imagem(thumbnail_temp, destino_thumbnail)
@@ -1993,9 +2242,9 @@ def iniciar_processamento():
             atualizar_metricas(total, processados, duplicados, erros)
             continue
 
-        log(f"   Upload original: {destino_original}")
-        url_original = fazer_upload_imagem(caminho, destino_original)
-        if not url_original:
+        log(f"   Upload large: {destino_large}")
+        url_large = fazer_upload_imagem(large_temp, destino_large)
+        if not url_large:
             deletar_arquivo_storage(destino_thumbnail)
             deletar_arquivo_storage(destino_medium)
             erros += 1
@@ -2005,34 +2254,49 @@ def iniciar_processamento():
             atualizar_metricas(total, processados, duplicados, erros)
             continue
 
+        log(f"   Upload original: {destino_original}")
+        url_original = fazer_upload_imagem(caminho, destino_original)
+        if not url_original:
+            deletar_arquivo_storage(destino_thumbnail)
+            deletar_arquivo_storage(destino_medium)
+            deletar_arquivo_storage(destino_large)
+            erros += 1
+            for temp in arquivos_temp:
+                if os.path.exists(temp):
+                    os.remove(temp)
+            atualizar_metricas(total, processados, duplicados, erros)
+            continue
+
+        files_metadata = {
+            "original": montar_info_arquivo(url_original, caminho),
+            "large": montar_info_arquivo(url_large, large_temp),
+            "medium": montar_info_arquivo(url_medium, medium_temp),
+            "thumb": montar_info_arquivo(url_thumbnail, thumbnail_temp)
+        }
+
         for temp in arquivos_temp:
             if os.path.exists(temp):
                 os.remove(temp)
 
-        tamanho_bytes = os.path.getsize(caminho)
         dados_documento = {
-            "asset_code": codigo_acervo,
             "original_name": nome,
-            "knowledge_area": metadados.get("knowledge_area", ""),
-            "visual_type": metadados.get("visual_type", ""),
-            "predominant_colors_pt": normalizar_lista_metadado(metadados.get("predominant_colors_pt", []), 5),
-            "predominant_colors_en": normalizar_lista_metadado(metadados.get("predominant_colors_en", []), 5),
+            "knowledge_area": slug_metadado(metadados.get("knowledge_area", "")),
+            "visual_type": slug_metadado(metadados.get("visual_type", "")),
+            "colors": normalizar_cores_metadados(metadados, 10),
             "description": metadados.get("description", ""),
-            "keywords": normalizar_lista_metadado(metadados.get("keywords", []), 15),
+            "keywords": normalizar_keywords_metadados(metadados.get("keywords", []), 15),
             "extension": normalizar_extensao(extensao),
-            "orientation": metadados.get("orientation", ""),
+            "orientation": normalizar_orientacao_metadado(
+                metadados.get("orientation", ""),
+                files_metadata["large"].get("width"),
+                files_metadata["large"].get("height")
+            ),
             "processed_at": datetime.now().isoformat(),
-            "source": origem,
+            "source": slug_metadado(origem),
             "chave_numeracao": chave_numeracao,
-            "caracteristica_cor": caracteristica_cor,
-            "eh_preto_e_branco": caracteristica_cor == "preto_e_branco",
             "sha256": hash_sha256,
             "phash": phash_str if phash_str else "",
-            "size_bytes": tamanho_bytes,
-            "resolutions": resolucao,
-            "url_original": url_original,
-            "url_medium": url_medium,
-            "url_thumb": url_thumbnail
+            "files": files_metadata
         }
 
         if gravar_no_firestore(dados_documento, uuid_img):

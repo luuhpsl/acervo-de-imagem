@@ -6,10 +6,10 @@ rules_version = '2';
 // autenticados, com e-mail verificado, do dominio corporativo @vitru.com.br.
 //
 // Estrutura principal:
-// acervo-visual-unificado/default/images/{imageId}
+// acervo-visual-unificado/{imageId}
 //
 // O imageId deve ser o mesmo UUID usado como pasta no Storage:
-// acervo-visual-unificado/assets/{imageId}/...
+// acervo-visual-unificado/{imageId}/...
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -21,13 +21,11 @@ service cloud.firestore {
 
     function isValidNewAsset(imageId) {
       return request.resource.data.keys().hasAll([
-          'asset_code',
           'original_name',
           'sha256',
-          'url_original',
-          'url_medium',
-          'url_thumb'
-        ]);
+          'files'
+        ])
+        && request.resource.data.files.keys().hasAll(['original', 'large', 'medium', 'thumb']);
     }
 
     function isValidLegacyAsset(imageId) {
@@ -40,25 +38,39 @@ service cloud.firestore {
         && request.resource.data.uuid == imageId;
     }
 
-    match /acervo-visual-unificado/default/images/{imageId} {
+    match /acervo-visual-unificado/{imageId} {
       allow read: if isCorporateUser();
 
-      // Aceita o schema novo do acervo e tambem o schema legado,
-      // para nao quebrar documentos antigos durante a transicao.
       allow create: if isCorporateUser()
-        && (isValidNewAsset(imageId) || isValidLegacyAsset(imageId));
+        && isValidNewAsset(imageId);
 
       // Atualizacao continua restrita. Hoje o programa normalmente cria
       // documentos novos; update fica reservado para reconciliacoes futuras.
       allow update: if isCorporateUser()
         && (
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sheet_synced']) ||
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['url_original', 'url_medium', 'url_thumb'])
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['files'])
         );
 
       // Necessario para a regra de substituicao visual:
       // quando um arquivo melhor substitui outro parecido, o programa apaga
       // o documento antigo somente depois que o novo upload e Firestore deram certo.
+      allow delete: if isCorporateUser();
+    }
+
+    // Caminho legado anterior do programa desktop.
+    match /acervo-visual-unificado/default/images/{imageId} {
+      allow read: if isCorporateUser();
+
+      allow create: if isCorporateUser()
+        && (isValidNewAsset(imageId) || isValidLegacyAsset(imageId));
+
+      allow update: if isCorporateUser()
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sheet_synced']) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['url_original', 'url_large', 'url_medium', 'url_thumb', 'files'])
+        );
+
       allow delete: if isCorporateUser();
     }
 

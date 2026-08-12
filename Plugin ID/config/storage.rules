@@ -1,10 +1,65 @@
 rules_version = '2';
+// Cole este conteudo em: Firebase Console > Storage > Regras.
+//
+// Regras do Acervo Visual Unificado.
+// Mantem o mesmo criterio corporativo usado no Firestore: usuario autenticado,
+// e-mail verificado e dominio @vitru.com.br.
 
 service firebase.storage {
   match /b/{bucket}/o {
-    match /acervo-visual-unificado/{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null;
+    function isCorporateUser() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('.*@vitru[.]com[.]br$');
+    }
+
+    // Estrutura nova: uma pasta por ativo, identificada pelo mesmo UUID
+    // usado no documento do Firestore. Dentro dela ficam:
+    // {uuid}_original.{extensao}, {uuid}_large.jpg, {uuid}_medium.jpg e {uuid}_thumb.jpg.
+    match /acervo-visual-unificado/{assetId}/{fileName} {
+      allow read: if isCorporateUser();
+      allow delete: if isCorporateUser();
+      allow write: if isCorporateUser()
+        && request.resource.size < 200 * 1024 * 1024;
+    }
+
+    // Caminhos legados, mantidos para arquivos/documentos antigos ja existentes.
+    match /acervo-visual-unificado/assets/{assetId}/{fileName} {
+      allow read: if isCorporateUser();
+      allow delete: if isCorporateUser();
+      allow write: if isCorporateUser()
+        && request.resource.size < 200 * 1024 * 1024;
+    }
+
+    // Miniaturas JPG leves para visualizacao no acervo/site.
+    match /acervo-visual-unificado/thumbnails/{source}/{year}/{fileName} {
+      allow read: if isCorporateUser();
+      allow delete: if isCorporateUser();
+      allow write: if isCorporateUser()
+        && request.resource.size < 20 * 1024 * 1024;
+    }
+
+    // Arquivos originais raster: jpg, jpeg, png etc.
+    match /acervo-visual-unificado/originals/raster/{source}/{year}/{fileName} {
+      allow read: if isCorporateUser();
+      allow delete: if isCorporateUser();
+      allow write: if isCorporateUser()
+        && request.resource.size < 200 * 1024 * 1024;
+    }
+
+    // Arquivos originais vetoriais: eps, ai, svg.
+    match /acervo-visual-unificado/originals/vector/{source}/{year}/{fileName} {
+      allow read: if isCorporateUser();
+      allow delete: if isCorporateUser();
+      allow write: if isCorporateUser()
+        && request.resource.size < 200 * 1024 * 1024;
+    }
+
+    match /acervo-visual-unificado/images/{year}/{uuid}/{fileName} {
+      allow read: if isCorporateUser();
+      allow delete: if isCorporateUser();
+      allow write: if isCorporateUser()
+        && request.resource.size < 200 * 1024 * 1024;
     }
   }
 }
