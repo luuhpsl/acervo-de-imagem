@@ -20,7 +20,7 @@ except Exception:
     pass
 
 
-APP_VERSION = "2.0.11"
+APP_VERSION = "2.0.12"
 APP_USER_MODEL_ID = "EdTech.AcervoImagens"
 UI_FONT = "MS Sans Serif"
 PIXEL_FONT = "Press Start 2P"

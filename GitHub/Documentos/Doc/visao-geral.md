@@ -15,7 +15,7 @@ Antes do sistema, os arquivos ficavam apenas no computador ou rede local, com po
 Com o sistema:
 
 - Os originais ficam no Firebase Storage.
-- As thumbnails ficam separadas para carregamento rápido.
+- Original e versões de visualização ficam reunidos na pasta UUID do ativo.
 - Os metadados ficam no Firestore.
 - Arquivos com falha podem ser reprocessados.
 - Processamentos longos podem ser retomados com fila/checkpoint.
@@ -41,11 +41,14 @@ Arquivos vetoriais são convertidos temporariamente para JPG para análise e thu
 
 ## Estado atual
 
-Versão atual documentada: `2.0.11`.
+Versão atual documentada: `2.0.12`.
 
 Principais recursos recentes:
 
-- Vitrine compatível com a coleção principal e com o caminho legado do Firestore.
+- Caminho único `acervo-visual-unificado/{uuid}` no Firestore e no Storage.
+- UUID determinístico, SHA-256 e pHash para impedir cadastros repetidos.
+- Tipos visuais e paleta de cores controlados em português.
+- Exatamente 15 palavras-chave sem conceitos repetidos entre idiomas.
 - Normalização dos metadados novos para pesquisa, visualização e exportação.
 - Descrições acessíveis mais completas geradas para pessoas com deficiência visual.
 - Log com cores distintas para mensagens normais, sucessos, avisos e erros.

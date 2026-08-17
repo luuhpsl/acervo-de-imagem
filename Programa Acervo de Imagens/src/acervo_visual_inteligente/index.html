@@ -393,18 +393,11 @@
             const snapshotNovo = await db.collection('acervo-visual-unificado').get();
             snapshotNovo.forEach(doc => {
                 const data = doc.data();
-                docs.push(normalizarDocumentoAcervo(doc.id, data));
+                const normalizado = normalizarDocumentoAcervo(doc.id, data);
+                if (normalizado.url_thumbnail || normalizado.url_visualizacao) {
+                    docs.push(normalizado);
+                }
             });
-
-            try {
-                const snapshotLegado = await db.collection('acervo-visual-unificado/default/images').get();
-                snapshotLegado.forEach(doc => {
-                    const data = doc.data();
-                    docs.push(normalizarDocumentoAcervo(doc.id, data));
-                });
-            } catch (legacyErr) {
-                console.warn('Caminho legado indisponivel:', legacyErr);
-            }
 
             // Agrupar por SHA-256 (conteúdo idêntico)
             const mapa = new Map();

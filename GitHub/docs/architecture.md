@@ -24,6 +24,9 @@ src/acervo_visual_inteligente/
 - Segredos não ficam versionados: use `.env.local` ou variáveis de ambiente.
 - `token.json`, `credentials.json`, filas locais e logs são ignorados pelo Git.
 - A fila de processamento usa checkpoint a cada 10 arquivos para reduzir risco de perda de progresso.
+- Firestore e Storage usam exclusivamente `acervo-visual-unificado/{uuid}`;
+  não existem subcoleções por origem ou ano.
+- O UUID dos novos ativos é derivado do SHA-256 para tornar a criação idempotente.
 
 ## Integrações
 

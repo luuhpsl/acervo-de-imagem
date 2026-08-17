@@ -125,22 +125,22 @@ python -m acervo_visual_inteligente.gui
 7. Se houver falhas, use `Reprocessar Pendentes`.
 8. Se houver uma lista de retomada, use o botão de upload para carregar um JSON.
 
-## Organização no Firebase Storage
+## Organização no Firebase
 
-Estrutura planejada:
+Cada ativo usa um único UUID no Firestore e no Storage:
 
 ```text
-acervo-visual-unificado/
-├── thumbnails/
-│   └── {origem}/{ano}/IMG-{ano}-{sequencial}.jpg
-└── originals/
-    ├── raster/
-    │   └── {origem}/{ano}/IMG-{ano}-{sequencial}.{jpg|jpeg|png}
-    └── vector/
-        └── {origem}/{ano}/IMG-{ano}-{sequencial}.{eps|ai|svg}
+Firestore: acervo-visual-unificado/{uuid}
+
+Storage: acervo-visual-unificado/{uuid}/
+├── {uuid}_original.{extensao}
+├── {uuid}_large.jpg
+├── {uuid}_medium.jpg
+└── {uuid}_thumb.jpg
 ```
 
-As thumbnails servem para visualização futura no site. Os originais são os arquivos que serão disponibilizados para download em alta resolução ou no formato vetorial original.
+Não são criadas subcoleções por origem ou ano. Descrição, cores, tipo visual e
+palavras-chave ficam exclusivamente no documento do Firestore.
 
 ## Validação rápida
 

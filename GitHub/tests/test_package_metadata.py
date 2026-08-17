@@ -10,7 +10,7 @@ import acervo_visual_inteligente
 
 def test_package_version_matches_project_metadata() -> None:
     """A versão pública do pacote deve seguir o padrão esperado."""
-    assert acervo_visual_inteligente.__version__ == "2.0.11"
+    assert acervo_visual_inteligente.__version__ == "2.0.12"
 
 
 def test_pyproject_points_to_gui_entrypoint() -> None:

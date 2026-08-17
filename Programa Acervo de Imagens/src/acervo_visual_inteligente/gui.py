@@ -21,7 +21,7 @@ load_local_env()
 try:
     from acervo_visual_inteligente import __version__
 except Exception:
-    __version__ = "2.0.11"
+    __version__ = "2.0.12"
 
 
 APP_VERSION = __version__
