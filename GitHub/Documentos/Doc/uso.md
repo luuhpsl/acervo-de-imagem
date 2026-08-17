@@ -48,6 +48,11 @@ Durante o processamento, acompanhe:
 - duplicados;
 - erros.
 
+Antes de enviar um arquivo, o programa verifica SHA-256 e semelhança visual no
+Firestore. Se essa consulta falhar, o upload é bloqueado e o arquivo permanece
+nas pendências. Isso evita cadastrar imagens sem uma verificação confiável de
+duplicidade.
+
 ## Pausar
 
 O botão `Pause` solicita pausa, mas a pausa só acontece entre uma imagem e outra. Se uma imagem já está sendo enviada/analisada, ela termina primeiro.

@@ -81,37 +81,26 @@ Selecionar pasta
 
 ## Firebase Storage
 
-Estrutura recomendada:
+Estrutura única:
 
 ```text
-acervo-visual-unificado/
-├── thumbnails/
-│   └── {origem}/{ano}/IMG-{ano}-{sequencial}.jpg
-└── originals/
-    ├── raster/
-    │   └── {origem}/{ano}/IMG-{ano}-{sequencial}.{jpg|jpeg|png}
-    └── vector/
-        └── {origem}/{ano}/IMG-{ano}-{sequencial}.{eps|ai|svg}
+acervo-visual-unificado/{uuid}/
+├── {uuid}_original.{extensao}
+├── {uuid}_large.jpg
+├── {uuid}_medium.jpg
+└── {uuid}_thumb.jpg
 ```
+
+O documento correspondente fica diretamente em
+`acervo-visual-unificado/{uuid}` no Firestore. Não existem caminhos alternativos
+por origem, ano ou tipo de arquivo.
 
 ## Firestore
 
-Cada documento deve guardar:
-
-- nome original;
-- nome amigável/sequencial;
-- origem;
-- extensão;
-- tipo do arquivo original;
-- resolução;
-- tamanho;
-- hash SHA-256;
-- pHash;
-- característica de cor;
-- URL/caminho do original;
-- URL/caminho da thumbnail;
-- metadados gerados pela IA;
-- datas de processamento.
+Cada documento guarda nome original, origem, extensão, orientação, SHA-256,
+pHash, área do conhecimento, tipo visual, de uma a cinco cores, descrição,
+exatamente 15 palavras-chave e os caminhos/URLs de original, large, medium e
+thumb. A chave numérica do fornecedor não é persistida.
 
 ## Pontos de atenção
 

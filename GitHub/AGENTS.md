@@ -80,17 +80,21 @@ Ao alterar filas:
 
 ## Firebase
 
-Estrutura esperada no Storage:
+Use exclusivamente estas estruturas:
 
 ```text
-acervo-visual-unificado/
-├── thumbnails/{origem}/{ano}/IMG-{ano}-{sequencial}.jpg
-└── originals/
-    ├── raster/{origem}/{ano}/IMG-{ano}-{sequencial}.{jpg|jpeg|png}
-    └── vector/{origem}/{ano}/IMG-{ano}-{sequencial}.{eps|ai|svg}
+Firestore: acervo-visual-unificado/{uuid}
+
+Storage: acervo-visual-unificado/{uuid}/
+├── {uuid}_original.{extensao}
+├── {uuid}_large.jpg
+├── {uuid}_medium.jpg
+└── {uuid}_thumb.jpg
 ```
 
-Metadados ficam no Firestore e devem conter caminhos/URLs suficientes para ligar thumbnail, original e futuro site.
+Não crie subcoleções por origem, ano ou tipo. Metadados ficam no Firestore e
+devem conter os caminhos/URLs das quatro versões. `chave_numeracao` pode ser
+calculada temporariamente a partir do nome, mas não deve ser persistida.
 
 ## Duplicidade e variações
 

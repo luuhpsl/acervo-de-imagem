@@ -54,6 +54,34 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
 # Caminhos no Firestore
 COLLECTION_PATH = "acervo-visual-unificado"
+ASSET_UUID_NAMESPACE = uuid.UUID("5ce95d48-6224-4f80-a486-f0efaf783919")
+VISUAL_TYPES_ALLOWED = {
+    "fotografia",
+    "vetorial",
+    "mockup",
+    "textura-abstrato",
+    "png",
+    "editorial",
+    "infografico",
+    "mapas",
+}
+COLOR_PALETTE = (
+    "rosa",
+    "vermelho",
+    "laranja",
+    "amarelo",
+    "verde",
+    "azul",
+    "roxo",
+    "marrom",
+    "preto",
+    "cinza",
+    "branco",
+)
+MAX_COLORS = 5
+KEYWORDS_PT_COUNT = 10
+KEYWORDS_EN_COUNT = 5
+KEYWORDS_TOTAL = KEYWORDS_PT_COUNT + KEYWORDS_EN_COUNT
 
 # Prefixos aceitos
 PREFIXOS_ACEITOS = ('shutterstock_', 'envato-', 'pexels', 'freestock')
@@ -363,9 +391,9 @@ def obter_token():
 # ============================================================
 # FUNÃ‡Ã•ES FIRESTORE E STORAGE
 # ============================================================
-def consultar_hash_no_firestore(hash_sha256):
+def consultar_hash_no_firestore(hash_sha256: str) -> tuple[bool, dict | None]:
     if not token_usuario:
-        return None
+        return False, None
     url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents:runQuery"
     headers = {"Authorization": f"Bearer {token_usuario}", "Content-Type": "application/json"}
     body = {
@@ -386,24 +414,54 @@ def consultar_hash_no_firestore(hash_sha256):
         if response.status_code == 200:
             dados = response.json()
             if dados and len(dados) > 0 and 'document' in dados[0]:
-                return dados[0]['document']
-        return None
-    except Exception:
-        return None
+                return True, dados[0]['document']
+            return True, None
+        log(f"   Falha ao consultar SHA-256 no Firestore: HTTP {response.status_code}.")
+        return False, None
+    except Exception as e:
+        log(f"   Falha ao consultar SHA-256 no Firestore: {str(e)}")
+        return False, None
 
-def consultar_phash_similar(phash_str, limite_distancia=5):
+def listar_documentos_firestore() -> tuple[bool, list[dict]]:
     if not token_usuario:
-        return None
+        return False, []
     url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{COLLECTION_PATH}"
     headers = {"Authorization": f"Bearer {token_usuario}"}
+    documentos = []
+    page_token = ""
     try:
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            return None
-        dados = response.json()
-        documentos = dados.get('documents', [])
+        while True:
+            params = {"pageSize": 1000}
+            if page_token:
+                params["pageToken"] = page_token
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code != 200:
+                log(f"   Falha ao listar o Firestore: HTTP {response.status_code}.")
+                return False, []
+            dados = response.json()
+            documentos.extend(dados.get("documents", []))
+            page_token = dados.get("nextPageToken", "")
+            if not page_token:
+                return True, documentos
+    except Exception as e:
+        log(f"   Falha ao listar o Firestore: {str(e)}")
+        return False, []
+
+def consultar_phash_similar(
+    phash_str: str,
+    limite_distancia: int = 5,
+    ignorar_doc_id: str = "",
+) -> tuple[bool, dict | None]:
+    if not token_usuario:
+        return False, None
+    try:
+        consulta_ok, documentos = listar_documentos_firestore()
+        if not consulta_ok:
+            return False, None
         phash_atual = imagehash.hex_to_hash(phash_str)
         for doc in documentos:
+            if ignorar_doc_id and obter_id_documento_firestore(doc) == ignorar_doc_id:
+                continue
             campos = doc.get('fields', {})
             if 'phash' in campos:
                 phash_doc = campos['phash'].get('stringValue')
@@ -413,12 +471,13 @@ def consultar_phash_similar(phash_str, limite_distancia=5):
                         distancia = phash_atual - phash_doc_hash
                         if distancia <= limite_distancia:
                             log(f"   Similaridade visual encontrada (distancia: {distancia}).")
-                            return doc
-                    except:
+                            return True, doc
+                    except Exception:
                         pass
-        return None
-    except Exception:
-        return None
+        return True, None
+    except Exception as e:
+        log(f"   Falha ao comparar pHash no Firestore: {str(e)}")
+        return False, None
 
 def gerar_codigo_acervo(ano):
     ano_curto = str(ano or datetime.now().year)[-2:]
@@ -493,6 +552,44 @@ def gravar_no_firestore(dados, doc_id):
         log(f"   ❌ Excecao ao salvar no Firestore: {str(e)}")
         return False
 
+def atualizar_files_no_firestore(doc_id: str, files: dict) -> bool:
+    url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{COLLECTION_PATH}/{doc_id}"
+    headers = {
+        "Authorization": f"Bearer {token_usuario}",
+        "Content-Type": "application/json",
+    }
+    body = {"fields": {"files": converter_valor_firestore(files)}}
+    try:
+        response = requests.patch(
+            url,
+            headers=headers,
+            params=[("updateMask.fieldPaths", "files")],
+            json=body,
+        )
+        if response.status_code == 200:
+            log("   Arquivos vinculados ao documento do Firestore.")
+            return True
+        log(f"   Erro ao atualizar arquivos no Firestore: HTTP {response.status_code}.")
+        return False
+    except Exception as e:
+        log(f"   Excecao ao atualizar arquivos no Firestore: {str(e)}")
+        return False
+
+def deletar_documento_firestore_por_id(doc_id: str) -> bool:
+    if not doc_id:
+        return False
+    url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{COLLECTION_PATH}/{doc_id}"
+    headers = {"Authorization": f"Bearer {token_usuario}"}
+    try:
+        response = requests.delete(url, headers=headers)
+        return response.status_code in (200, 204, 404)
+    except Exception as e:
+        log(f"   Excecao ao remover reserva do Firestore: {str(e)}")
+        return False
+
+def gerar_uuid_deterministico(hash_sha256: str) -> str:
+    return str(uuid.uuid5(ASSET_UUID_NAMESPACE, hash_sha256.lower().strip()))
+
 # ============================================================
 # FUNÃ‡ÃƒO PARA DELETAR ARQUIVO DO STORAGE
 # ============================================================
@@ -536,7 +633,9 @@ def obter_caminhos_storage_documento(doc):
             caminhos.append(caminho)
 
     for versao in ("original", "large", "medium", "thumb"):
-        caminho = obter_caminho_storage_por_url(obter_file_firestore(doc, versao, "url"))
+        caminho = obter_file_firestore(doc, versao, "path")
+        if not caminho:
+            caminho = obter_caminho_storage_por_url(obter_file_firestore(doc, versao, "url"))
         if caminho and caminho not in caminhos:
             caminhos.append(caminho)
 
@@ -574,10 +673,15 @@ def deletar_documento_firestore_por_doc(doc):
 def excluir_registro_repetido_substituido(doc, motivo):
     doc_id = obter_id_documento_firestore(doc)
     log("   Substituindo versao anterior...")
-    for caminho_storage in obter_caminhos_storage_documento(doc):
-        deletar_arquivo_storage(caminho_storage)
-    if deletar_documento_firestore_por_doc(doc):
-        log("   Versao anterior substituida.")
+    caminhos_storage = obter_caminhos_storage_documento(doc)
+    if not deletar_documento_firestore_por_doc(doc):
+        log(f"   Nao foi possivel remover o documento anterior {doc_id}; arquivos preservados.")
+        return False
+    for caminho_storage in caminhos_storage:
+        if not deletar_arquivo_storage(caminho_storage):
+            log(f"   Arquivo antigo ficou orfao no Storage: {caminho_storage}")
+    log(f"   Versao anterior substituida: {doc_id} ({motivo}).")
+    return True
 
 # ============================================================
 # LIMPEZA DE REGISTROS SHUTTERSTOCK
@@ -660,8 +764,8 @@ def limpar_shutterstock():
             continue
 
         # 2. Excluir arquivos do Storage
-        caminho_thumbnail = f"acervo-visual-unificado/thumbnails/shutterstock/{ano}/{nome_amigavel}.jpg"
-        caminho_original = f"acervo-visual-unificado/originals/{tipo_arquivo_original}/shutterstock/{ano}/{nome_amigavel}{extensao}"
+        caminho_thumbnail = f"acervo-visual-unificado/{doc_id}/{doc_id}_thumb.jpg"
+        caminho_original = f"acervo-visual-unificado/{doc_id}/{doc_id}_original{extensao}"
 
         if False:
             log(f"   âš ï¸ NÃ£o foi possÃ­vel deletar visualizaÃ§Ã£o: {caminho_visualizacao}")
@@ -696,32 +800,17 @@ def limpar_shutterstock():
         return
 
     log("Buscando documentos Shutterstock no Firestore...")
-    url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{COLLECTION_PATH}"
-    headers = {"Authorization": f"Bearer {token_usuario}"}
-    try:
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            log(f"Erro ao buscar documentos: {response.status_code}")
-            return
-        documentos = response.json().get('documents', [])
-    except Exception as e:
-        log(f"Erro ao consultar Firestore: {str(e)}")
+    consulta_ok, documentos = listar_documentos_firestore()
+    if not consulta_ok:
+        log("Erro ao consultar Firestore. Limpeza cancelada.")
         return
 
-    docs_para_excluir = []
-    for doc in documentos:
-        campos = doc.get('fields', {})
-        origem = campos.get('origem', {}).get('stringValue', '')
-        if origem.lower() != 'shutterstock':
-            continue
-        extensao = campos.get('extensao', {}).get('stringValue', '.jpg')
-        docs_para_excluir.append({
-            'id': doc['name'].split('/')[-1],
-            'nome_amigavel': campos.get('nome_amigavel', {}).get('stringValue', ''),
-            'ano': campos.get('data_processamento', {}).get('stringValue', '2026')[:4],
-            'extensao': extensao,
-            'tipo_arquivo_original': campos.get('tipo_arquivo_original', {}).get('stringValue', detectar_tipo_arquivo_original(extensao))
-        })
+    docs_para_excluir = [
+        doc
+        for doc in documentos
+        if (obter_string_firestore(doc, "source") or obter_string_firestore(doc, "origem")).lower()
+        == "shutterstock"
+    ]
 
     if not docs_para_excluir:
         log("Nenhum documento Shutterstock encontrado. Nada a fazer.")
@@ -738,34 +827,20 @@ def limpar_shutterstock():
     deletados = 0
     erros = 0
     for doc in docs_para_excluir:
-        doc_id = doc['id']
-        nome_amigavel = doc['nome_amigavel']
-        ano = doc['ano'] or '2026'
-        extensao = doc['extensao']
-        tipo_arquivo_original = doc['tipo_arquivo_original']
-
-        url_del_firestore = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{COLLECTION_PATH}/{doc_id}"
-        try:
-            resp_fire = requests.delete(url_del_firestore, headers=headers)
-            if resp_fire.status_code not in (200, 204):
-                log(f"   Erro ao excluir documento {doc_id}: {resp_fire.status_code}")
-                erros += 1
-                continue
-        except Exception as e:
-            log(f"   Excecao ao excluir documento {doc_id}: {str(e)}")
-            erros += 1
-            continue
-
-        caminhos_storage = [
-            f"acervo-visual-unificado/thumbnails/shutterstock/{ano}/{nome_amigavel}.jpg",
-            f"acervo-visual-unificado/originals/{tipo_arquivo_original}/shutterstock/{ano}/{nome_amigavel}{extensao}",
-        ]
-        for caminho_storage in caminhos_storage:
+        doc_id = obter_id_documento_firestore(doc)
+        falha_storage = False
+        for caminho_storage in obter_caminhos_storage_documento(doc):
             if not deletar_arquivo_storage(caminho_storage):
                 log(f"   Nao foi possivel deletar: {caminho_storage}")
                 erros += 1
-            else:
-                log(f"   Removido: {caminho_storage}")
+                falha_storage = True
+        if falha_storage:
+            log(f"   Documento {doc_id} preservado porque houve falha no Storage.")
+            continue
+        if not deletar_documento_firestore_por_doc(doc):
+            log(f"   Nao foi possivel excluir o documento {doc_id}.")
+            erros += 1
+            continue
         deletados += 1
 
     log(f"Limpeza concluida: {deletados} documentos removidos, {erros} erros.")
@@ -793,69 +868,98 @@ def chamar_openai_chat(payload, timeout=120):
         raise RuntimeError(f"OpenAI HTTP {response.status_code}: {detalhes}")
     return response.json()
 
+def arquivo_png_tem_transparencia(caminho: str) -> bool:
+    if os.path.splitext(caminho)[1].lower() != ".png":
+        return False
+    try:
+        with Image.open(caminho) as img:
+            if img.mode in ("RGBA", "LA"):
+                alpha = img.getchannel("A")
+                return alpha.getextrema()[0] < 255
+            return "transparency" in img.info
+    except Exception:
+        return False
+
+def montar_prompt_analise(extensao_original: str, png_com_transparencia: bool) -> str:
+    transparencia = "sim" if png_com_transparencia else "nao"
+    return f"""
+Analise uma unica imagem para um acervo visual acessivel. Retorne APENAS um
+objeto JSON valido, sem Markdown, comentarios ou texto adicional.
+
+Contexto tecnico fornecido pelo programa:
+- extensao original: {normalizar_extensao(extensao_original)}
+- PNG com transparencia real: {transparencia}
+
+Estrutura obrigatoria:
+{{
+  "knowledge_area": "uma area controlada",
+  "visual_type": "um tipo visual controlado",
+  "colors": ["entre uma e cinco cores"],
+  "description": "descricao acessivel em portugues",
+  "keywords": ["exatamente 15 termos"]
+}}
+
+Areas permitidas para knowledge_area:
+ciencias-da-saude; ciencias-biologicas; exatas-e-da-terra; ciencias-humanas;
+ciencias-sociais-aplicadas; engenharias; linguagens; ciencias-agrarias;
+direito; gastronomia; linguistica-letras-e-artes; producao-cultural-e-design.
+
+Tipos permitidos para visual_type:
+fotografia; vetorial; mockup; textura-abstrato; png; editorial; infografico; mapas.
+
+Classificacao do tipo visual:
+1. editorial: registro jornalistico, acontecimento real, movimento social ou momento historico.
+2. infografico: infografico, diagrama, fluxograma, esquema ou grafico de dados.
+3. mapas: representacao geografica, politica, historica, tematica ou cartografica.
+4. mockup: design apresentado ou simulado em tela, embalagem, cartaz, livro ou suporte.
+5. png: elemento isolado ou recortado com transparencia real; nunca apenas pela extensao.
+6. textura-abstrato: textura, padrao, fundo ou composicao predominantemente abstrata.
+7. vetorial: ilustracao, desenho digital ou arte vetorial.
+8. fotografia: fotografia comum que nao se enquadre como editorial.
+
+Cores:
+Use somente rosa, vermelho, laranja, amarelo, verde, azul, roxo, marrom,
+preto, cinza e branco. Retorne cinco cores distintas quando houver cinco
+cores visualmente relevantes. Retorne de uma a quatro somente se a imagem
+realmente tiver menos de cinco cores relevantes. Nunca invente cores para
+completar a lista, nunca repita, nao use ciano e nao crie tonalidades fora
+da lista, como bege, dourado, turquesa ou azul-claro.
+
+Description:
+Escreva em portugues, em texto corrido, com aproximadamente 60 a 100 palavras
+e no maximo cinco frases; imagens simples podem ser menores. A primeira frase
+deve informar tipo visual, assunto principal e acao ou contexto visivel.
+Depois descreva apenas elementos relevantes, posicao, planos, formas, tamanhos
+relativos, texturas, cores, luz e sombra perceptiveis. Transcreva texto legivel
+exatamente entre aspas duplas. Se estiver ilegivel, diga apenas que ha texto
+ilegivel. Nao infira identidade, profissao, emocao, intencao, lugar, epoca,
+causa ou significado. Nao use titulo, topicos, introducao ou conclusao.
+
+Keywords:
+Gere exatamente 15 termos em uma unica lista. Os 10 primeiros devem ser em
+portugues e os 5 ultimos em ingles. Nao repita conceitos, traducoes diretas,
+singular e plural, variacoes de genero, sinonimos proximos, abreviacao e forma
+completa, nem pequenas variacoes morfologicas da mesma ideia.
+
+Qualquer palavra cujo uso natural seja compartilhado entre portugues e ingles
+deve aparecer apenas uma vez, independentemente de ser um termo tecnico ou
+uma palavra comum. Isso inclui, sem se limitar a, CPU, hardware, software,
+notebook, login, upload, download, dashboard, layout e mockup. Quando uma
+palavra ja for usada naturalmente nos dois idiomas, mantenha a forma original
+em uma unica posicao e escolha outro conceito complementar para a outra parte
+da lista.
+
+Antes de responder, confira silenciosamente: exatamente 15 keywords; primeiras
+10 em portugues; ultimas 5 em ingles; nenhum conceito duplicado ou traduzido.
+
+Padronizacao:
+Retorne knowledge_area, visual_type, colors e keywords em minusculas, sem
+acentos e com hifen no lugar de espacos. Mantenha description em portugues
+normal, com acentos e pontuacao.
+"""
+
 def testar_openai():
     try:
-        prompt = """
-        Analise esta imagem e retorne APENAS um JSON valido, sem texto adicional.
-
-        Campos obrigatorios:
-        {
-            "knowledge_area": "uma das areas controladas",
-            "visual_type": "um dos tipos visuais controlados",
-            "colors": ["cor1", "cor2", "cor3", "cor4", "cor5", "color1", "color2", "color3", "color4", "color5"],
-            "description": "descricao acessivel, objetiva e factual em portugues",
-            "keywords": ["15 termos no total"],
-            "orientation": "paisagem, retrato, quadrado ou panoramica"
-        }
-
-        Areas controladas para knowledge_area:
-        Ciencias da Saude; Ciencias Biologicas; Exatas e da terra; Ciencias Humanas;
-        Ciencias Sociais Aplicadas; Engenharias; Linguagens; Ciencias Agrarias;
-        Direito; Gastronomia; Linguistica Letras e Artes; Producao Cultural e Design.
-
-        Tipos controlados para visual_type:
-        Fotografia; Ilustracao; Arte vetorial; Infografico; Diagrama ou fluxograma;
-        Grafico de dados; Tabela ou matriz; Mapa; Interface digital; Mockup;
-        Textura ou padrao; Produto ou objeto isolado; Cena 3D.
-
-        Regras da description:
-        A description deve ser uma descricao acessivel em portugues, escrita em texto corrido,
-        sem topicos ou marcadores, voltada para pessoas com deficiencia visual. Comece sempre
-        identificando o tipo visual e o assunto principal da imagem, por exemplo:
-        "Fotografia de uma professora em sala de aula" ou "Ilustracao de um grafico financeiro".
-
-        Descreva apenas o que e visivel, sem inferencias, interpretacoes subjetivas ou
-        julgamentos. Inclua os elementos principais da imagem, formas, tamanhos relativos,
-        texturas, cores, disposicao espacial, primeiro plano, segundo plano, fundo, luz e
-        sombra quando perceptiveis. Se houver texto visivel na imagem, coloque as palavras
-        entre aspas duplas.
-
-        A descricao deve ficar em um meio termo: mais completa do que uma legenda curta, mas
-        sem ficar excessivamente longa. Use linguagem clara, objetiva, factual e direta.
-
-        Regras de keywords:
-        Gere exatamente 15 termos no campo keywords. Os 10 primeiros termos devem ser em
-        portugues e os 5 ultimos em ingles. Nao separe por idioma; mantenha tudo em uma
-        unica lista. Evite termos repetidos, traducoes diretas excessivas e ideias duplicadas.
-        Nao use o mesmo conceito em dois idiomas, por exemplo: nao use "vetor" e "vector",
-        "ilustracao" e "illustration", "grafico" e "graphic", "arte" e "art" no mesmo retorno.
-        Termos tecnicos, siglas, nomes de tecnologias e palavras amplamente usadas em ingles
-        tambem no portugues devem ser mantidos na forma original, como CPU, hardware, software,
-        notebook, login, upload, download, dashboard, layout e mockup. Nao duplique o mesmo
-        conceito em portugues e ingles quando o termo original ja for o uso natural nos dois
-        idiomas; nesses casos, escolha outro termo complementar relevante.
-
-        Regras de orientation:
-        Use exclusivamente uma destas quatro opcoes: paisagem, retrato, quadrado ou panoramica.
-        Use panoramica apenas quando a imagem for muito mais larga do que alta.
-
-        Padronizacao dos campos controlados:
-        Para knowledge_area, visual_type, colors, keywords e orientation,
-        retorne os valores sem acento, em letras minusculas e com
-        hifen no lugar de espacos. Exemplo: "Ciencias Humanas" deve virar
-        "ciencias-humanas"; "sala de aula" deve virar "sala-de-aula".
-        A description deve permanecer em texto corrido normal, com acentos quando necessario.
-        """
         resposta = chamar_openai_chat({
             "model": "gpt-4o-mini",
             "messages": [{"role": "user", "content": "Responda apenas: OK"}],
@@ -929,7 +1033,11 @@ def calcular_tamanho_total(arquivos):
             continue
     return total
 
-def analisar_imagem_com_openai(caminho_imagem):
+def analisar_imagem_com_openai(
+    caminho_imagem: str,
+    extensao_original: str = "",
+    png_com_transparencia: bool = False,
+):
     global ultimo_erro_openai
     ultimo_erro_openai = None
     try:
@@ -946,73 +1054,7 @@ def analisar_imagem_com_openai(caminho_imagem):
         elif extensao in ['.jpg', '.jpeg']:
             mime_type = "image/jpeg"
         
-        prompt = """
-        Analise esta imagem e retorne APENAS um JSON valido, sem texto adicional.
-
-        Campos obrigatorios:
-        {
-            "knowledge_area": "uma das areas controladas",
-            "visual_type": "um dos tipos visuais controlados",
-            "colors": ["cor1", "cor2", "cor3", "cor4", "cor5", "color1", "color2", "color3", "color4", "color5"],
-            "description": "descricao acessivel, objetiva e factual em portugues",
-            "keywords": ["15 termos no total"],
-            "orientation": "paisagem, retrato, quadrado ou panoramica"
-        }
-
-        Areas controladas para knowledge_area:
-        Ciencias da Saude; Ciencias Biologicas; Exatas e da terra; Ciencias Humanas;
-        Ciencias Sociais Aplicadas; Engenharias; Linguagens; Ciencias Agrarias;
-        Direito; Gastronomia; Linguistica Letras e Artes; Producao Cultural e Design.
-
-        Tipos controlados para visual_type:
-        Fotografia; Ilustracao; Arte vetorial; Infografico; Diagrama ou fluxograma;
-        Grafico de dados; Tabela ou matriz; Mapa; Interface digital; Mockup;
-        Textura ou padrao; Produto ou objeto isolado; Cena 3D.
-
-        Regras da description:
-        A description deve ser uma descricao acessivel em portugues, escrita em texto corrido,
-        sem topicos ou marcadores, voltada para pessoas com deficiencia visual. Comece sempre
-        identificando o tipo visual e o assunto principal da imagem, por exemplo:
-        "Fotografia de uma professora em sala de aula" ou "Ilustracao de um grafico financeiro".
-
-        Descreva apenas o que e visivel, sem inferencias, interpretacoes subjetivas ou
-        julgamentos. Inclua os elementos principais da imagem, formas, tamanhos relativos,
-        texturas, cores, disposicao espacial, primeiro plano, segundo plano, fundo, luz e
-        sombra quando perceptiveis. Se houver texto visivel na imagem, coloque as palavras
-        entre aspas duplas.
-
-        A descricao deve ficar em um meio termo: mais completa do que uma legenda curta, mas
-        sem ficar excessivamente longa. Use linguagem clara, objetiva, factual e direta.
-
-        Regras de colors:
-        Gere ate 10 cores predominantes no campo colors. As 5 primeiras devem ser em portugues
-        e as 5 ultimas em ingles. Nao separe por idioma; mantenha tudo em uma unica lista.
-        Evite repeticoes e traducoes desnecessarias quando o termo for igual ou amplamente
-        usado nos dois idiomas.
-
-        Regras de keywords:
-        Gere exatamente 15 termos no campo keywords. Os 10 primeiros termos devem ser em
-        portugues e os 5 ultimos em ingles. Nao separe por idioma; mantenha tudo em uma
-        unica lista. Evite termos repetidos, traducoes diretas excessivas e ideias duplicadas.
-        Nao use o mesmo conceito em dois idiomas, por exemplo: nao use "vetor" e "vector",
-        "ilustracao" e "illustration", "grafico" e "graphic", "arte" e "art" no mesmo retorno.
-        Termos tecnicos, siglas, nomes de tecnologias e palavras amplamente usadas em ingles
-        tambem no portugues devem ser mantidos na forma original, como CPU, hardware, software,
-        notebook, login, upload, download, dashboard, layout e mockup. Nao duplique o mesmo
-        conceito em portugues e ingles quando o termo original ja for o uso natural nos dois
-        idiomas; nesses casos, escolha outro termo complementar relevante.
-
-        Regras de orientation:
-        Use exclusivamente uma destas quatro opcoes: paisagem, retrato, quadrado ou panoramica.
-        Use panoramica apenas quando a imagem for muito mais larga do que alta.
-
-        Padronizacao dos campos controlados:
-        Para knowledge_area, visual_type, colors, keywords e orientation,
-        retorne os valores sem acento, em letras minusculas e com hifen no lugar de espacos.
-        Exemplo: "Ciencias Humanas" deve virar "ciencias-humanas"; "sala de aula" deve virar
-        "sala-de-aula". A description deve permanecer em texto corrido normal, com acentos
-        quando necessario.
-        """
+        prompt = montar_prompt_analise(extensao_original or extensao, png_com_transparencia)
         resposta = chamar_openai_chat({
             "model": "gpt-4o-mini",
             "messages": [
@@ -1034,7 +1076,10 @@ def analisar_imagem_com_openai(caminho_imagem):
             "max_tokens": 1000,
         })
         texto_resposta = resposta["choices"][0]["message"]["content"]
-        return carregar_json_resposta_ia(texto_resposta)
+        metadados = carregar_json_resposta_ia(texto_resposta)
+        if not metadados:
+            return None
+        return validar_metadados_ia(metadados)
     except Exception as e:
         ultimo_erro_openai = str(e)
         log(f"   âŒ Erro no OpenAI: {str(e)}")
@@ -1100,8 +1145,52 @@ def chave_conceito_keyword(keyword):
         "negocios": "negocios",
         "person": "pessoa",
         "pessoa": "pessoa",
-        "people": "pessoas",
-        "pessoas": "pessoas",
+        "people": "pessoa",
+        "pessoas": "pessoa",
+        "map": "mapa",
+        "maps": "mapa",
+        "mapa": "mapa",
+        "mapas": "mapa",
+        "photo": "fotografia",
+        "photograph": "fotografia",
+        "photography": "fotografia",
+        "foto": "fotografia",
+        "fotografia": "fotografia",
+        "texture": "textura",
+        "textura": "textura",
+        "background": "fundo",
+        "fundo": "fundo",
+        "data": "dados",
+        "dados": "dados",
+        "image": "imagem",
+        "imagem": "imagem",
+        "object": "objeto",
+        "objeto": "objeto",
+        "teacher": "professor",
+        "professor": "professor",
+        "professora": "professor",
+        "student": "estudante",
+        "students": "estudante",
+        "estudante": "estudante",
+        "estudantes": "estudante",
+        "school": "escola",
+        "escola": "escola",
+        "classroom": "sala-de-aula",
+        "sala-de-aula": "sala-de-aula",
+        "learning": "aprendizagem",
+        "aprendizagem": "aprendizagem",
+        "work": "trabalho",
+        "trabalho": "trabalho",
+        "design": "design",
+        "layout": "layout",
+        "mockup": "mockup",
+        "software": "software",
+        "hardware": "hardware",
+        "notebook": "notebook",
+        "login": "login",
+        "upload": "upload",
+        "download": "download",
+        "dashboard": "dashboard",
     }
     return equivalencias.get(slug, slug)
 
@@ -1158,7 +1247,24 @@ def normalizar_orientacao_metadado(valor, largura=0, altura=0):
         return "paisagem"
     return "retrato"
 
-def normalizar_cores_metadados(metadados, limite=10):
+def normalizar_tipo_visual(valor: object) -> str:
+    tipo = slug_metadado(valor)
+    aliases = {
+        "ilustracao": "vetorial",
+        "arte-vetorial": "vetorial",
+        "vetor": "vetorial",
+        "textura": "textura-abstrato",
+        "abstrato": "textura-abstrato",
+        "textura-ou-padrao": "textura-abstrato",
+        "mapa": "mapas",
+        "diagrama": "infografico",
+        "fluxograma": "infografico",
+        "grafico-de-dados": "infografico",
+    }
+    tipo = aliases.get(tipo, tipo)
+    return tipo if tipo in VISUAL_TYPES_ALLOWED else ""
+
+def normalizar_cores_metadados(metadados, limite=MAX_COLORS):
     cores = []
     for campo in ("colors", "predominant_colors", "cores_predominantes", "predominant_colors_pt", "predominant_colors_en"):
         valor = metadados.get(campo, []) if isinstance(metadados, dict) else []
@@ -1166,15 +1272,76 @@ def normalizar_cores_metadados(metadados, limite=10):
 
     cores_normalizadas = []
     vistos = set()
+    aliases = {
+        "pink": "rosa",
+        "red": "vermelho",
+        "orange": "laranja",
+        "yellow": "amarelo",
+        "green": "verde",
+        "blue": "azul",
+        "purple": "roxo",
+        "brown": "marrom",
+        "black": "preto",
+        "gray": "cinza",
+        "grey": "cinza",
+        "white": "branco",
+    }
     for cor in cores:
         cor_slug = slug_metadado(cor)
-        if not cor_slug or cor_slug in vistos:
+        cor_slug = aliases.get(cor_slug, cor_slug)
+        if cor_slug not in COLOR_PALETTE or cor_slug in vistos:
             continue
         vistos.add(cor_slug)
         cores_normalizadas.append(cor_slug)
         if limite and len(cores_normalizadas) >= limite:
             break
     return cores_normalizadas
+
+def validar_metadados_ia(metadados: dict) -> dict | None:
+    global ultimo_erro_openai
+    areas_permitidas = {
+        "ciencias-da-saude",
+        "ciencias-biologicas",
+        "exatas-e-da-terra",
+        "ciencias-humanas",
+        "ciencias-sociais-aplicadas",
+        "engenharias",
+        "linguagens",
+        "ciencias-agrarias",
+        "direito",
+        "gastronomia",
+        "linguistica-letras-e-artes",
+        "producao-cultural-e-design",
+    }
+    area = slug_metadado(metadados.get("knowledge_area", ""))
+    tipo = normalizar_tipo_visual(metadados.get("visual_type", ""))
+    cores = normalizar_cores_metadados(metadados, MAX_COLORS)
+    descricao = str(metadados.get("description", "")).strip()
+    keywords = normalizar_keywords_metadados(metadados.get("keywords", []), KEYWORDS_TOTAL)
+
+    problemas = []
+    if area not in areas_permitidas:
+        problemas.append("area de conhecimento invalida")
+    if not tipo:
+        problemas.append("tipo visual invalido")
+    if not 1 <= len(cores) <= MAX_COLORS:
+        problemas.append("a lista de cores deve ter entre 1 e 5 cores permitidas")
+    if not descricao:
+        problemas.append("descricao vazia")
+    if len(keywords) != KEYWORDS_TOTAL:
+        problemas.append("keywords devem conter 15 conceitos unicos")
+    if problemas:
+        ultimo_erro_openai = "Metadados invalidos: " + "; ".join(problemas) + "."
+        log(f"   {ultimo_erro_openai}")
+        return None
+
+    return {
+        "knowledge_area": area,
+        "visual_type": tipo,
+        "colors": cores,
+        "description": descricao,
+        "keywords": keywords,
+    }
 
 def montar_resolucoes(original, large=None, medium=None, thumb=None):
     if thumb is None:
@@ -1188,9 +1355,10 @@ def obter_dimensoes_arquivo(caminho):
     except Exception:
         return 0, 0
 
-def montar_info_arquivo(url, caminho):
+def montar_info_arquivo(url: str, caminho: str, storage_path: str = "") -> dict:
     largura, altura = obter_dimensoes_arquivo(caminho)
     return {
+        "path": storage_path,
         "url": url or "",
         "size_bytes": os.path.getsize(caminho) if caminho and os.path.exists(caminho) else 0,
         "width": largura,
@@ -1244,15 +1412,11 @@ def exportar_para_excel():
         messagebox.showerror("Erro", "VocÃª precisa estar autenticado.")
         return
     log("ðŸ“Š Buscando dados do Firestore para exportar...")
-    url = f"https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents/{COLLECTION_PATH}"
-    headers = {"Authorization": f"Bearer {token_usuario}"}
     try:
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            log(f"âŒ Erro ao buscar dados: {response.status_code}")
+        consulta_ok, documentos = listar_documentos_firestore()
+        if not consulta_ok:
+            log("Erro ao buscar todos os dados do Firestore.")
             return
-        dados = response.json()
-        documentos = dados.get('documents', [])
         if not documentos:
             log("âš ï¸ Nenhum documento encontrado no Firestore.")
             return
@@ -1359,14 +1523,29 @@ def calcular_hash_sha256(caminho):
         log(f"âŒ Erro ao ler {caminho}: {str(e)}")
         return None
 
-def calcular_phash(caminho):
+def calcular_phash(caminho: str):
+    caminho_phash = caminho
+    temporario = ""
     try:
-        img = Image.open(caminho)
-        phash = imagehash.phash(img)
-        return str(phash)
+        if os.path.splitext(caminho)[1].lower() in EXTENSOES_VETORIAIS:
+            temporario = os.path.join(
+                os.path.dirname(caminho),
+                f"phash_{uuid.uuid4().hex}.jpg",
+            )
+            if not converter_para_jpg(caminho, temporario):
+                return None
+            caminho_phash = temporario
+        with Image.open(caminho_phash) as img:
+            return str(imagehash.phash(img))
     except Exception as e:
         log(f"   âš ï¸ Erro ao calcular pHash: {str(e)}")
         return None
+    finally:
+        if temporario and os.path.exists(temporario):
+            try:
+                os.remove(temporario)
+            except OSError:
+                pass
 
 def detectar_caracteristica_cor_por_nome(nome_arquivo):
     stem = os.path.splitext(os.path.basename(nome_arquivo))[0].lower()
@@ -1468,6 +1647,31 @@ def obter_string_firestore(doc, campo):
     valor = fields.get(campo, {})
     return valor.get("stringValue", "") if isinstance(valor, dict) else ""
 
+def documento_upload_completo(doc: dict) -> bool:
+    return bool(
+        obter_file_firestore(doc, "original", "url")
+        or obter_string_firestore(doc, "url_original")
+        or obter_string_firestore(doc, "url_visualizacao")
+    )
+
+def reserva_firestore_expirada(doc: dict, segundos: int = 3600) -> bool:
+    if documento_upload_completo(doc):
+        return False
+    texto_data = obter_string_firestore(doc, "processed_at") or doc.get("createTime", "")
+    if not texto_data:
+        return False
+    try:
+        data = datetime.fromisoformat(texto_data.replace("Z", "+00:00"))
+        agora = datetime.now(data.tzinfo) if data.tzinfo else datetime.now()
+        return (agora - data).total_seconds() >= segundos
+    except Exception:
+        return False
+
+def remover_reserva_incompleta(doc: dict) -> bool:
+    for caminho_storage in obter_caminhos_storage_documento(doc):
+        deletar_arquivo_storage(caminho_storage)
+    return deletar_documento_firestore_por_doc(doc)
+
 def obter_numero_firestore(doc, campo, padrao=0):
     fields = doc.get("fields", {}) if isinstance(doc, dict) else {}
     valor = fields.get(campo, {})
@@ -1565,10 +1769,8 @@ def deve_enviar_por_prioridade_visual(doc_similar, caminho_atual, extensao_atual
 def deve_manter_colorida_com_pb_existente(doc_similar, chave_numeracao, caracteristica_cor):
     if caracteristica_cor != "colorida" or not chave_numeracao:
         return False
-    chave_doc = obter_string_firestore(doc_similar, "chave_numeracao")
-    if not chave_doc:
-        nome_original = obter_string_firestore(doc_similar, "original_name") or obter_string_firestore(doc_similar, "nome_original")
-        chave_doc = formatar_chave_numeracao(nome_original)
+    nome_original = obter_string_firestore(doc_similar, "original_name") or obter_string_firestore(doc_similar, "nome_original")
+    chave_doc = formatar_chave_numeracao(nome_original)
     return chave_doc == chave_numeracao and obter_caracteristica_cor_firestore(doc_similar) == "preto_e_branco"
 
 def arquivo_parece_copia(caminho):
@@ -1765,7 +1967,6 @@ def registrar_pendencia(caminho, origem, hash_sha256, phash_str, extensao, motiv
         "caminho": caminho,
         "nome_original": os.path.basename(caminho),
         "origem": origem,
-        "chave_numeracao": formatar_chave_numeracao(caminho),
         "caracteristica_cor": detectar_caracteristica_cor(caminho),
         "sha256": hash_sha256 or "",
         "phash": phash_str or "",
@@ -2047,7 +2248,6 @@ def iniciar_processamento_antigo_sem_fila():
             "url_visualizacao": url_visualizacao,
             "url_original": url_original,
             "origem": origem,
-            "chave_numeracao": chave_numeracao,
             "sha256": hash_sha256,
             "phash": phash_str if phash_str else "",
             "extensao": extensao,
@@ -2177,6 +2377,7 @@ def iniciar_processamento():
 
         chave_numeracao = formatar_chave_numeracao(caminho)
         caracteristica_cor = detectar_caracteristica_cor(caminho)
+        extensao = os.path.splitext(caminho)[1].lower()
 
         hash_sha256 = calcular_hash_sha256(caminho)
         if not hash_sha256:
@@ -2184,19 +2385,41 @@ def iniciar_processamento():
             atualizar_metricas(total, processados, duplicados, erros)
             continue
 
-        if consultar_hash_no_firestore(hash_sha256):
-            remover_pendencia(hash_sha256)
-            log("   DUPLICADO EXATO (SHA-256). Pulando.")
-            duplicados += 1
+        uuid_img = gerar_uuid_deterministico(hash_sha256)
+        consulta_hash_ok, doc_hash = consultar_hash_no_firestore(hash_sha256)
+        if not consulta_hash_ok:
+            motivo = "Falha ao verificar duplicidade SHA-256 no Firestore."
+            registrar_pendencia(caminho, origem, hash_sha256, "", extensao, motivo)
+            log("   Verificacao de duplicidade indisponivel. Upload bloqueado.")
+            erros += 1
             atualizar_metricas(total, processados, duplicados, erros)
             continue
+        if doc_hash:
+            if (
+                obter_id_documento_firestore(doc_hash) == uuid_img
+                and reserva_firestore_expirada(doc_hash)
+                and remover_reserva_incompleta(doc_hash)
+            ):
+                log("   Reserva incompleta antiga removida; o arquivo sera retomado.")
+            else:
+                remover_pendencia(hash_sha256)
+                log("   DUPLICADO EXATO (SHA-256). Pulando.")
+                duplicados += 1
+                atualizar_metricas(total, processados, duplicados, erros)
+                continue
 
-        extensao = os.path.splitext(caminho)[1].lower()
         doc_repetido_para_excluir = None
         motivo_exclusao_repetido = ""
         phash_str = calcular_phash(caminho)
         if phash_str:
-            doc_similar = consultar_phash_similar(phash_str, limite_distancia=5)
+            consulta_phash_ok, doc_similar = consultar_phash_similar(phash_str, limite_distancia=5)
+            if not consulta_phash_ok:
+                motivo = "Falha ao verificar similaridade visual no Firestore."
+                registrar_pendencia(caminho, origem, hash_sha256, phash_str, extensao, motivo)
+                log("   Verificacao visual indisponivel. Upload bloqueado.")
+                erros += 1
+                atualizar_metricas(total, processados, duplicados, erros)
+                continue
             if doc_similar:
                 if deve_manter_colorida_com_pb_existente(doc_similar, chave_numeracao, caracteristica_cor):
                     motivo_exclusao_repetido = "nova versao colorida substitui variacao PB semelhante"
@@ -2215,7 +2438,12 @@ def iniciar_processamento():
                         atualizar_metricas(total, processados, duplicados, erros)
                         continue
         else:
-            log("   Nao foi possivel calcular pHash.")
+            motivo = "Nao foi possivel calcular pHash para verificar duplicidade visual."
+            registrar_pendencia(caminho, origem, hash_sha256, "", extensao, motivo)
+            log("   Nao foi possivel calcular pHash. Upload bloqueado.")
+            erros += 1
+            atualizar_metricas(total, processados, duplicados, erros)
+            continue
 
         arquivos_temp = []
         fonte_visualizacao = caminho
@@ -2268,7 +2496,11 @@ def iniciar_processamento():
 
         log("   Analisando com ChatGPT Vision...")
         if openai_disponivel:
-            metadados = analisar_imagem_com_openai(imagem_para_analise)
+            metadados = analisar_imagem_com_openai(
+                imagem_para_analise,
+                extensao_original=extensao,
+                png_com_transparencia=arquivo_png_tem_transparencia(caminho),
+            )
         else:
             metadados = None
         resolucao_original = obter_resolucao(caminho)
@@ -2300,7 +2532,6 @@ def iniciar_processamento():
 
         log("   Analise OpenAI concluida.")
 
-        uuid_img = str(uuid.uuid4())
         log(f"   ID do arquivo: {uuid_img}")
 
         destino_pasta = f"acervo-visual-unificado/{uuid_img}"
@@ -2309,9 +2540,114 @@ def iniciar_processamento():
         destino_large = f"{destino_pasta}/{uuid_img}_large.jpg"
         destino_original = f"{destino_pasta}/{uuid_img}_original{extensao}"
 
+        files_reserva = {
+            "original": montar_info_arquivo("", caminho, destino_original),
+            "large": montar_info_arquivo("", large_temp, destino_large),
+            "medium": montar_info_arquivo("", medium_temp, destino_medium),
+            "thumb": montar_info_arquivo("", thumbnail_temp, destino_thumbnail),
+        }
+        dados_documento = {
+            "original_name": nome,
+            "knowledge_area": metadados["knowledge_area"],
+            "visual_type": metadados["visual_type"],
+            "colors": metadados["colors"],
+            "description": metadados["description"],
+            "keywords": metadados["keywords"],
+            "extension": normalizar_extensao(extensao),
+            "orientation": normalizar_orientacao_metadado(
+                "",
+                files_reserva["large"].get("width"),
+                files_reserva["large"].get("height"),
+            ),
+            "processed_at": datetime.now().isoformat(),
+            "source": slug_metadado(origem),
+            "sha256": hash_sha256,
+            "phash": phash_str if phash_str else "",
+            "files": files_reserva,
+        }
+
+        log("   Reservando documento no Firestore...")
+        if not gravar_no_firestore(dados_documento, uuid_img):
+            consulta_reserva_ok, doc_reserva = consultar_hash_no_firestore(hash_sha256)
+            for temp in arquivos_temp:
+                if os.path.exists(temp):
+                    os.remove(temp)
+            if consulta_reserva_ok and doc_reserva:
+                remover_pendencia(hash_sha256)
+                log("   Outro processamento reservou este arquivo. Duplicata pulada.")
+                duplicados += 1
+            else:
+                registrar_pendencia(
+                    caminho,
+                    origem,
+                    hash_sha256,
+                    phash_str,
+                    extensao,
+                    "Falha ao reservar documento no Firestore.",
+                )
+                erros += 1
+            atualizar_metricas(total, processados, duplicados, erros)
+            continue
+
+        if phash_str:
+            consulta_final_ok, doc_concorrente = consultar_phash_similar(
+                phash_str,
+                limite_distancia=5,
+                ignorar_doc_id=uuid_img,
+            )
+            if not consulta_final_ok:
+                deletar_documento_firestore_por_id(uuid_img)
+                for temp in arquivos_temp:
+                    if os.path.exists(temp):
+                        os.remove(temp)
+                registrar_pendencia(
+                    caminho,
+                    origem,
+                    hash_sha256,
+                    phash_str,
+                    extensao,
+                    "Falha na verificacao visual final do Firestore.",
+                )
+                log("   Verificacao visual final falhou. Upload bloqueado.")
+                erros += 1
+                atualizar_metricas(total, processados, duplicados, erros)
+                continue
+            if doc_concorrente and (
+                not doc_repetido_para_excluir
+                or obter_id_documento_firestore(doc_concorrente)
+                != obter_id_documento_firestore(doc_repetido_para_excluir)
+            ):
+                if deve_manter_colorida_com_pb_existente(
+                    doc_concorrente,
+                    chave_numeracao,
+                    caracteristica_cor,
+                ):
+                    deve_enviar = True
+                    motivo_prioridade = "nova versao colorida substitui variacao PB semelhante"
+                else:
+                    deve_enviar, motivo_prioridade = deve_enviar_por_prioridade_visual(
+                        doc_concorrente,
+                        caminho,
+                        extensao,
+                    )
+                if deve_enviar:
+                    doc_repetido_para_excluir = doc_concorrente
+                    motivo_exclusao_repetido = motivo_prioridade
+                else:
+                    deletar_documento_firestore_por_id(uuid_img)
+                    for temp in arquivos_temp:
+                        if os.path.exists(temp):
+                            os.remove(temp)
+                    remover_pendencia(hash_sha256)
+                    log("   Duplicata visual concorrente encontrada. Arquivo pulado.")
+                    duplicados += 1
+                    atualizar_metricas(total, processados, duplicados, erros)
+                    continue
+
         log("   Enviando versoes: thumb, medium, large e original...")
         url_thumbnail = fazer_upload_imagem(thumbnail_temp, destino_thumbnail)
         if not url_thumbnail:
+            deletar_documento_firestore_por_id(uuid_img)
             erros += 1
             for temp in arquivos_temp:
                 if os.path.exists(temp):
@@ -2322,6 +2658,7 @@ def iniciar_processamento():
         url_medium = fazer_upload_imagem(medium_temp, destino_medium)
         if not url_medium:
             deletar_arquivo_storage(destino_thumbnail)
+            deletar_documento_firestore_por_id(uuid_img)
             erros += 1
             for temp in arquivos_temp:
                 if os.path.exists(temp):
@@ -2333,6 +2670,7 @@ def iniciar_processamento():
         if not url_large:
             deletar_arquivo_storage(destino_thumbnail)
             deletar_arquivo_storage(destino_medium)
+            deletar_documento_firestore_por_id(uuid_img)
             erros += 1
             for temp in arquivos_temp:
                 if os.path.exists(temp):
@@ -2345,6 +2683,7 @@ def iniciar_processamento():
             deletar_arquivo_storage(destino_thumbnail)
             deletar_arquivo_storage(destino_medium)
             deletar_arquivo_storage(destino_large)
+            deletar_documento_firestore_por_id(uuid_img)
             erros += 1
             for temp in arquivos_temp:
                 if os.path.exists(temp):
@@ -2355,47 +2694,54 @@ def iniciar_processamento():
         log("   Upload concluido.")
 
         files_metadata = {
-            "original": montar_info_arquivo(url_original, caminho),
-            "large": montar_info_arquivo(url_large, large_temp),
-            "medium": montar_info_arquivo(url_medium, medium_temp),
-            "thumb": montar_info_arquivo(url_thumbnail, thumbnail_temp)
+            "original": montar_info_arquivo(url_original, caminho, destino_original),
+            "large": montar_info_arquivo(url_large, large_temp, destino_large),
+            "medium": montar_info_arquivo(url_medium, medium_temp, destino_medium),
+            "thumb": montar_info_arquivo(url_thumbnail, thumbnail_temp, destino_thumbnail)
         }
 
         for temp in arquivos_temp:
             if os.path.exists(temp):
                 os.remove(temp)
 
-        dados_documento = {
-            "original_name": nome,
-            "knowledge_area": slug_metadado(metadados.get("knowledge_area", "")),
-            "visual_type": slug_metadado(metadados.get("visual_type", "")),
-            "colors": normalizar_cores_metadados(metadados, 10),
-            "description": metadados.get("description", ""),
-            "keywords": normalizar_keywords_metadados(metadados.get("keywords", []), 15),
-            "extension": normalizar_extensao(extensao),
-            "orientation": normalizar_orientacao_metadado(
-                metadados.get("orientation", ""),
-                files_metadata["large"].get("width"),
-                files_metadata["large"].get("height")
-            ),
-            "processed_at": datetime.now().isoformat(),
-            "source": slug_metadado(origem),
-            "chave_numeracao": chave_numeracao,
-            "sha256": hash_sha256,
-            "phash": phash_str if phash_str else "",
-            "files": files_metadata
-        }
-
-        log("   Salvando metadados no Firestore...")
-        if gravar_no_firestore(dados_documento, uuid_img):
-            processados += 1
-            remover_pendencia(hash_sha256)
-            if doc_repetido_para_excluir:
-                excluir_registro_repetido_substituido(doc_repetido_para_excluir, motivo_exclusao_repetido)
+        log("   Finalizando metadados no Firestore...")
+        if atualizar_files_no_firestore(uuid_img, files_metadata):
+            substituicao_ok = not doc_repetido_para_excluir or excluir_registro_repetido_substituido(
+                doc_repetido_para_excluir,
+                motivo_exclusao_repetido,
+            )
+            if substituicao_ok:
+                processados += 1
+                remover_pendencia(hash_sha256)
+            else:
+                deletar_arquivo_storage(destino_thumbnail)
+                deletar_arquivo_storage(destino_medium)
+                deletar_arquivo_storage(destino_large)
+                deletar_arquivo_storage(destino_original)
+                deletar_documento_firestore_por_id(uuid_img)
+                registrar_pendencia(
+                    caminho,
+                    origem,
+                    hash_sha256,
+                    phash_str,
+                    extensao,
+                    "Falha ao substituir documento visualmente repetido.",
+                )
+                erros += 1
         else:
             deletar_arquivo_storage(destino_thumbnail)
             deletar_arquivo_storage(destino_medium)
+            deletar_arquivo_storage(destino_large)
             deletar_arquivo_storage(destino_original)
+            deletar_documento_firestore_por_id(uuid_img)
+            registrar_pendencia(
+                caminho,
+                origem,
+                hash_sha256,
+                phash_str,
+                extensao,
+                "Falha ao finalizar metadados no Firestore.",
+            )
             erros += 1
 
         atualizar_metricas(total, processados, duplicados, erros)
