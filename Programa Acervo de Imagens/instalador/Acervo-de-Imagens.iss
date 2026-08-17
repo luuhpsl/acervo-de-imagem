@@ -1,5 +1,5 @@
 ﻿#define MyAppName "Acervo de Imagens"
-#define MyAppVersion "2.0.10"
+#define MyAppVersion "2.0.11"
 #define MyAppPublisher "Produção Digital"
 #define MyAppExeName "Acervo-de-Imagens.exe"
 #define SourceDist "C:\\Users\\lucas.silveira\\Documents\\Codex\\2026-07-29\\ol-chat-tenho-esse-programa-que\\meu_catalogo_continuacao\\Programa Acervo de Imagens\\executavel\\nuitka313\\main.dist"

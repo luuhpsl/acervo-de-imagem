@@ -42,6 +42,6 @@ if errorlevel 1 (
 
 echo.
 echo Instalador gerado em:
-echo %cd%\executavel\Instalador-Acervo-de-Imagens-v2.0.10.exe
+echo %cd%\executavel\Instalador-Acervo-de-Imagens-v2.0.11.exe
 echo.
 pause

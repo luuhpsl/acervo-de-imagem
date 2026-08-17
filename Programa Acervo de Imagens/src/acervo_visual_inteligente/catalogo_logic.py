@@ -18,6 +18,7 @@ import imagehash
 import openpyxl
 from openpyxl import Workbook
 import subprocess
+from urllib.parse import unquote, urlparse
 
 try:
     from env_config import load_local_env
@@ -117,10 +118,57 @@ COR_VARIACAO_CACHE = {}
 # ============================================================
 # FUNÃ‡Ã•ES AUXILIARES
 # ============================================================
+def configurar_cores_log():
+    try:
+        bg = str(log_texto.cget("bg")).lower()
+        tema_escuro = bg in ("#000000", "#080808", "#101010", "black")
+        log_texto.tag_configure("log_normal", foreground="#f2f2f2" if tema_escuro else "#000000")
+        log_texto.tag_configure("log_sucesso", foreground="#39ff77" if tema_escuro else "#149b20")
+        log_texto.tag_configure("log_erro", foreground="#ff4d6a" if tema_escuro else "#b00020")
+        log_texto.tag_configure("log_aviso", foreground="#ffd166" if tema_escuro else "#9a6500")
+    except Exception:
+        pass
+
+def obter_tag_log(mensagem):
+    texto_original = str(mensagem)
+    texto = unicodedata.normalize("NFKD", texto_original).encode("ascii", "ignore").decode("ascii").lower()
+    if "processados:" in texto:
+        return "log_sucesso"
+    if "duplicados:" in texto:
+        return "log_aviso"
+    if "erros/pendencias:" in texto:
+        return "log_erro"
+    if (
+        "erro" in texto
+        or "falha" in texto
+        or "falhou" in texto
+        or "excecao" in texto
+        or "nao foi possivel" in texto
+        or "pendente" in texto
+    ):
+        return "log_erro"
+    if (
+        "similar" in texto
+        or "duplicata" in texto
+        or "substitu" in texto
+        or "arquivo pulado" in texto
+    ):
+        return "log_aviso"
+    if (
+        "concluid" in texto
+        or "dados salvos" in texto
+        or "upload concluido" in texto
+        or "encontrados" in texto
+        or "versao anterior substituida" in texto
+    ):
+        return "log_sucesso"
+    return "log_normal"
+
 def log(mensagem):
     estava_no_fim = log_texto.yview()[1] >= 0.98
     log_texto.config(state='normal')
-    log_texto.insert(tk.END, mensagem + '\n')
+    configurar_cores_log()
+    log_texto.insert(tk.END, mensagem + '\n', obter_tag_log(mensagem))
     linhas = int(log_texto.index('end-1c').split('.')[0])
     if linhas > LOG_MAX_LINES:
         log_texto.delete('1.0', f'{linhas - LOG_MAX_LINES}.0')
@@ -141,16 +189,17 @@ def atualizar_log_varredura(percentual=None):
         mensagem = f"Varredura: [{barra}] {percentual:3d}%"
 
     log_texto.config(state='normal')
+    configurar_cores_log()
     if linha_log_varredura is None:
-        log_texto.insert(tk.END, mensagem + '\n')
+        log_texto.insert(tk.END, mensagem + '\n', "log_normal")
         linha_log_varredura = log_texto.index("end-2l linestart")
     else:
         try:
             log_texto.delete(linha_log_varredura, f"{linha_log_varredura} lineend")
-            log_texto.insert(linha_log_varredura, mensagem)
+            log_texto.insert(linha_log_varredura, mensagem, "log_normal")
         except tk.TclError:
             linha_log_varredura = None
-            log_texto.insert(tk.END, mensagem + '\n')
+            log_texto.insert(tk.END, mensagem + '\n', "log_normal")
             linha_log_varredura = log_texto.index("end-2l linestart")
     if log_texto.yview()[1] >= 0.98:
         log_texto.see(tk.END)
@@ -275,22 +324,22 @@ def obter_token():
                 data = json.load(f)
                 token_usuario = data.get('token')
                 if token_usuario:
-                    log("âœ… Token encontrado. Autenticando...")
+                    log("Token encontrado. Autenticando...")
                     email, verified = obter_informacoes_usuario(token_usuario)
                     if email:
                         email_usuario = email
-                        log(f"ðŸ‘¤ UsuÃ¡rio: {email} (verificado: {verified})")
+                        log(f"Usuario: {email} (verificado: {verified})")
                         if not verified:
-                            log("âš ï¸ ATENÃ‡ÃƒO: Email nÃ£o verificado. As regras exigem verificaÃ§Ã£o.")
+                            log("ATENCAO: Email nao verificado. As regras podem exigir verificacao.")
                         return token_usuario
                     else:
-                        log("âš ï¸ Token invÃ¡lido. SerÃ¡ solicitado novo login.")
+                        log("Token invalido. Sera solicitado novo login.")
                         token_usuario = None
         except Exception as e:
-            log(f"âš ï¸ Erro ao ler token: {str(e)}")
+            log(f"Erro ao ler token: {str(e)}")
             token_usuario = None
 
-    log("ðŸ”‘ Abrindo navegador para login...")
+    log("Abrindo navegador para login...")
     iniciar_servidor()
     webbrowser.open('http://localhost:5000')
     for _ in range(60):
@@ -303,7 +352,7 @@ def obter_token():
                         email, verified = obter_informacoes_usuario(token_usuario)
                         if email:
                             email_usuario = email
-                            log(f"ðŸ‘¤ UsuÃ¡rio: {email} (verificado: {verified})")
+                            log(f"Usuario: {email} (verificado: {verified})")
                             return token_usuario
             except Exception:
                 pass
@@ -363,7 +412,7 @@ def consultar_phash_similar(phash_str, limite_distancia=5):
                         phash_doc_hash = imagehash.hex_to_hash(phash_doc)
                         distancia = phash_atual - phash_doc_hash
                         if distancia <= limite_distancia:
-                            log(f"   ðŸ” Similaridade visual (distÃ¢ncia: {distancia})")
+                            log(f"   Similaridade visual encontrada (distancia: {distancia}).")
                             return doc
                     except:
                         pass
@@ -394,10 +443,10 @@ def fazer_upload_imagem(caminho_local, destino):
             url_publica = f"https://firebasestorage.googleapis.com/v0/b/{STORAGE_BUCKET}/o/{destino.replace('/', '%2F')}?alt=media"
             return url_publica
         else:
-            log(f"   âŒ Upload falhou: {response.status_code}")
+            log(f"   Upload falhou: {response.status_code}")
             return None
     except Exception as e:
-        log(f"   âŒ ExceÃ§Ã£o no upload: {str(e)}")
+        log(f"   Excecao no upload: {str(e)}")
         return None
 
 def converter_valor_firestore(value):
@@ -429,13 +478,19 @@ def gravar_no_firestore(dados, doc_id):
     try:
         response = requests.post(url, headers=headers, json=body)
         if response.status_code in (200, 201):
-            log(f"   ðŸ’¾ Dados salvos no Firestore (ID: {doc_id})")
+            log("   Dados salvos no Firestore.")
             return True
         else:
-            log(f"   âŒ Erro ao salvar no Firestore: {response.status_code} - {response.text}")
+            if response.status_code == 403:
+                log("   Erro ao salvar no Firestore: 403 - permissao negada.")
+            else:
+                detalhe = (response.text or "").strip().replace("\n", " ")
+                if len(detalhe) > 180:
+                    detalhe = detalhe[:180] + "..."
+                log(f"   Erro ao salvar no Firestore: {response.status_code} - {detalhe}")
             return False
     except Exception as e:
-        log(f"   âŒ ExceÃ§Ã£o ao salvar no Firestore: {str(e)}")
+        log(f"   ❌ Excecao ao salvar no Firestore: {str(e)}")
         return False
 
 # ============================================================
@@ -449,16 +504,29 @@ def deletar_arquivo_storage(caminho_completo):
         response = requests.delete(url, headers=headers)
         if response.status_code in (200, 204):
             return True
+        if response.status_code == 404:
+            return True
         else:
-            log(f"   âŒ Erro ao deletar {caminho_completo}: {response.status_code}")
+            log(f"   Erro ao remover arquivo antigo no Storage: {response.status_code}")
             return False
     except Exception as e:
-        log(f"   âŒ ExceÃ§Ã£o ao deletar {caminho_completo}: {str(e)}")
+        log(f"   ❌ Excecao ao remover arquivo antigo no Storage: {str(e)}")
         return False
 
 def obter_id_documento_firestore(doc):
     nome_doc = doc.get("name", "") if isinstance(doc, dict) else ""
     return nome_doc.split("/")[-1] if nome_doc else ""
+
+def obter_caminho_storage_por_url(url_arquivo):
+    if not url_arquivo:
+        return ""
+    try:
+        caminho_url = urlparse(url_arquivo).path
+        if "/o/" not in caminho_url:
+            return ""
+        return unquote(caminho_url.split("/o/", 1)[1]).lstrip("/")
+    except Exception:
+        return ""
 
 def obter_caminhos_storage_documento(doc):
     caminhos = []
@@ -467,21 +535,20 @@ def obter_caminhos_storage_documento(doc):
         if caminho and caminho not in caminhos:
             caminhos.append(caminho)
 
+    for versao in ("original", "large", "medium", "thumb"):
+        caminho = obter_caminho_storage_por_url(obter_file_firestore(doc, versao, "url"))
+        if caminho and caminho not in caminhos:
+            caminhos.append(caminho)
+
     doc_id = obter_id_documento_firestore(doc)
     extensao = obter_extensao_firestore(doc)
     if doc_id and extensao:
         pasta = f"acervo-visual-unificado/{doc_id}"
-        pasta_legacy = f"acervo-visual-unificado/assets/{doc_id}"
-        asset_code = obter_string_firestore(doc, "asset_code") or obter_string_firestore(doc, "codigo") or obter_string_firestore(doc, "nome_amigavel") or doc_id
         caminhos_novos = [
             f"{pasta}/{doc_id}_original.{extensao}",
             f"{pasta}/{doc_id}_large.jpg",
             f"{pasta}/{doc_id}_medium.jpg",
             f"{pasta}/{doc_id}_thumb.jpg",
-            f"{pasta_legacy}/{asset_code}_original.{extensao}",
-            f"{pasta_legacy}/{asset_code}_large.jpg",
-            f"{pasta_legacy}/{asset_code}_medium.jpg",
-            f"{pasta_legacy}/{asset_code}_thumb.jpg",
         ]
         for caminho in caminhos_novos:
             if caminho not in caminhos:
@@ -506,11 +573,11 @@ def deletar_documento_firestore_por_doc(doc):
 
 def excluir_registro_repetido_substituido(doc, motivo):
     doc_id = obter_id_documento_firestore(doc)
-    log(f"   Removendo repetido substituido ({doc_id}): {motivo}.")
+    log("   Substituindo versao anterior...")
     for caminho_storage in obter_caminhos_storage_documento(doc):
         deletar_arquivo_storage(caminho_storage)
     if deletar_documento_firestore_por_doc(doc):
-        log("   Registro repetido removido do Firestore.")
+        log("   Versao anterior substituida.")
 
 # ============================================================
 # LIMPEZA DE REGISTROS SHUTTERSTOCK
@@ -752,10 +819,19 @@ def testar_openai():
         Textura ou padrao; Produto ou objeto isolado; Cena 3D.
 
         Regras da description:
-        Comece informando o tipo visual e o assunto principal. Descreva apenas o que e visivel,
-        sem interpretacoes subjetivas. Inclua elementos principais, posicao, cores, luz,
-        profundidade e textos visiveis, se houver. Textos visiveis devem ficar entre aspas.
-        Use texto corrido, claro, acessivel e moderado em tamanho.
+        A description deve ser uma descricao acessivel em portugues, escrita em texto corrido,
+        sem topicos ou marcadores, voltada para pessoas com deficiencia visual. Comece sempre
+        identificando o tipo visual e o assunto principal da imagem, por exemplo:
+        "Fotografia de uma professora em sala de aula" ou "Ilustracao de um grafico financeiro".
+
+        Descreva apenas o que e visivel, sem inferencias, interpretacoes subjetivas ou
+        julgamentos. Inclua os elementos principais da imagem, formas, tamanhos relativos,
+        texturas, cores, disposicao espacial, primeiro plano, segundo plano, fundo, luz e
+        sombra quando perceptiveis. Se houver texto visivel na imagem, coloque as palavras
+        entre aspas duplas.
+
+        A descricao deve ficar em um meio termo: mais completa do que uma legenda curta, mas
+        sem ficar excessivamente longa. Use linguagem clara, objetiva, factual e direta.
 
         Regras de keywords:
         Gere exatamente 15 termos no campo keywords. Os 10 primeiros termos devem ser em
@@ -787,7 +863,7 @@ def testar_openai():
         }, timeout=45)
         return bool(resposta.get("choices"))
     except Exception as e:
-        log(f"âŒ Falha ao conectar com OpenAI: {str(e)}")
+        log(f"Falha ao conectar com OpenAI: {str(e)}")
         return False
 
 def carregar_json_resposta_ia(texto_resposta):
@@ -894,10 +970,19 @@ def analisar_imagem_com_openai(caminho_imagem):
         Textura ou padrao; Produto ou objeto isolado; Cena 3D.
 
         Regras da description:
-        Comece informando o tipo visual e o assunto principal. Descreva apenas o que e visivel,
-        sem interpretacoes subjetivas. Inclua elementos principais, posicao, cores, luz,
-        profundidade e textos visiveis, se houver. Textos visiveis devem ficar entre aspas.
-        Use texto corrido, claro, acessivel e moderado em tamanho.
+        A description deve ser uma descricao acessivel em portugues, escrita em texto corrido,
+        sem topicos ou marcadores, voltada para pessoas com deficiencia visual. Comece sempre
+        identificando o tipo visual e o assunto principal da imagem, por exemplo:
+        "Fotografia de uma professora em sala de aula" ou "Ilustracao de um grafico financeiro".
+
+        Descreva apenas o que e visivel, sem inferencias, interpretacoes subjetivas ou
+        julgamentos. Inclua os elementos principais da imagem, formas, tamanhos relativos,
+        texturas, cores, disposicao espacial, primeiro plano, segundo plano, fundo, luz e
+        sombra quando perceptiveis. Se houver texto visivel na imagem, coloque as palavras
+        entre aspas duplas.
+
+        A descricao deve ficar em um meio termo: mais completa do que uma legenda curta, mas
+        sem ficar excessivamente longa. Use linguagem clara, objetiva, factual e direta.
 
         Regras de colors:
         Gere ate 10 cores predominantes no campo colors. As 5 primeiras devem ser em portugues
@@ -1756,7 +1841,7 @@ def escolher_pasta():
 
     arquivos_verificados = 0
     ultimo_percentual_logado = 0
-    log(f"ðŸ“ Varrendo: {pasta}")
+    log(f"Varrendo: {pasta}")
     for raiz, subpastas, arquivos in os.walk(pasta):
         for arquivo in arquivos:
             arquivos_verificados += 1
@@ -1781,7 +1866,7 @@ def escolher_pasta():
         lista_arquivos.insert(tk.END, caminho)
     if arquivos_ignorados:
         log(f"Ignoradas {formatar_numero(len(arquivos_ignorados))} copias/variacoes com a mesma numeracao.")
-    log(f"âœ… Encontrados {formatar_numero(total)} arquivos ({formatar_tamanho_bytes(tamanho_total)}).")
+    log(f"Encontrados {formatar_numero(total)} arquivos ({formatar_tamanho_bytes(tamanho_total)}).")
     if total > DISPLAY_FILE_LIMIT:
         lista_arquivos.insert(tk.END, f"... mais {formatar_numero(total - DISPLAY_FILE_LIMIT)} arquivos ocultos na lista visual")
         log(f"Lista visual limitada aos primeiros {formatar_numero(DISPLAY_FILE_LIMIT)} arquivos para manter o programa leve.")
@@ -2044,9 +2129,13 @@ def iniciar_processamento():
         if not token_usuario:
             return
 
-    if OPENAI_API_KEY == "SUA_CHAVE_OPENAI_AQUI":
-        log("ERRO: Chave da OpenAI nao configurada.")
-        messagebox.showerror("Erro", "Configure sua chave da OpenAI.")
+    if not obter_openai_api_key():
+        log("ERRO: Chave da OpenAI nao configurada. Preencha OPENAI_API_KEY no arquivo .env.local.")
+        messagebox.showerror(
+            "OpenAI nao configurada",
+            "A chave da OpenAI nao esta configurada.\n\n"
+            "Preencha OPENAI_API_KEY no arquivo .env.local e abra o programa novamente."
+        )
         return
 
     log("Testando conexao com OpenAI...")
@@ -2088,8 +2177,6 @@ def iniciar_processamento():
 
         chave_numeracao = formatar_chave_numeracao(caminho)
         caracteristica_cor = detectar_caracteristica_cor(caminho)
-        if caracteristica_cor != "desconhecida":
-            log(f"   Variacao de cor: {caracteristica_cor}.")
 
         hash_sha256 = calcular_hash_sha256(caminho)
         if not hash_sha256:
@@ -2114,16 +2201,16 @@ def iniciar_processamento():
                 if deve_manter_colorida_com_pb_existente(doc_similar, chave_numeracao, caracteristica_cor):
                     motivo_exclusao_repetido = "nova versao colorida substitui variacao PB semelhante"
                     doc_repetido_para_excluir = doc_similar
-                    log("   Variacao colorida encontrada para item que existia em PB. A nova versao vai substituir a anterior se o upload concluir.")
+                    log("   Arquivo similar encontrado. A versao anterior sera substituida apos o upload.")
                 else:
                     deve_enviar, motivo_prioridade = deve_enviar_por_prioridade_visual(doc_similar, caminho, extensao)
                     if deve_enviar:
                         motivo_exclusao_repetido = motivo_prioridade
                         doc_repetido_para_excluir = doc_similar
-                        log(f"   Similar visual encontrado, mas esta versao vai substituir a anterior se o upload concluir: {motivo_prioridade}.")
+                        log("   Arquivo similar encontrado. A versao anterior sera substituida apos o upload.")
                     else:
                         remover_pendencia(hash_sha256)
-                        log(f"   DUPLICATA VISUAL (pHash similar). Pulando: {motivo_prioridade}.")
+                        log("   Duplicata visual encontrada. Arquivo pulado.")
                         duplicados += 1
                         atualizar_metricas(total, processados, duplicados, erros)
                         continue
@@ -2214,6 +2301,7 @@ def iniciar_processamento():
         log("   Analise OpenAI concluida.")
 
         uuid_img = str(uuid.uuid4())
+        log(f"   ID do arquivo: {uuid_img}")
 
         destino_pasta = f"acervo-visual-unificado/{uuid_img}"
         destino_thumbnail = f"{destino_pasta}/{uuid_img}_thumb.jpg"
@@ -2221,7 +2309,7 @@ def iniciar_processamento():
         destino_large = f"{destino_pasta}/{uuid_img}_large.jpg"
         destino_original = f"{destino_pasta}/{uuid_img}_original{extensao}"
 
-        log(f"   Upload thumb: {destino_thumbnail}")
+        log("   Enviando versoes: thumb, medium, large e original...")
         url_thumbnail = fazer_upload_imagem(thumbnail_temp, destino_thumbnail)
         if not url_thumbnail:
             erros += 1
@@ -2231,7 +2319,6 @@ def iniciar_processamento():
             atualizar_metricas(total, processados, duplicados, erros)
             continue
 
-        log(f"   Upload medium: {destino_medium}")
         url_medium = fazer_upload_imagem(medium_temp, destino_medium)
         if not url_medium:
             deletar_arquivo_storage(destino_thumbnail)
@@ -2242,7 +2329,6 @@ def iniciar_processamento():
             atualizar_metricas(total, processados, duplicados, erros)
             continue
 
-        log(f"   Upload large: {destino_large}")
         url_large = fazer_upload_imagem(large_temp, destino_large)
         if not url_large:
             deletar_arquivo_storage(destino_thumbnail)
@@ -2254,7 +2340,6 @@ def iniciar_processamento():
             atualizar_metricas(total, processados, duplicados, erros)
             continue
 
-        log(f"   Upload original: {destino_original}")
         url_original = fazer_upload_imagem(caminho, destino_original)
         if not url_original:
             deletar_arquivo_storage(destino_thumbnail)
@@ -2266,6 +2351,8 @@ def iniciar_processamento():
                     os.remove(temp)
             atualizar_metricas(total, processados, duplicados, erros)
             continue
+
+        log("   Upload concluido.")
 
         files_metadata = {
             "original": montar_info_arquivo(url_original, caminho),
@@ -2299,6 +2386,7 @@ def iniciar_processamento():
             "files": files_metadata
         }
 
+        log("   Salvando metadados no Firestore...")
         if gravar_no_firestore(dados_documento, uuid_img):
             processados += 1
             remover_pendencia(hash_sha256)
@@ -2320,6 +2408,7 @@ def iniciar_processamento():
 
     atualizar_checkpoint_processamento(total, completed=True)
     progresso['value'] = 100
+    log("--------------------------------------------------------------")
     log("Processamento finalizado.")
     tempo_total = formatar_duracao(time.time() - tempo_inicio_processamento)
     log(f"   Processados: {processados}")

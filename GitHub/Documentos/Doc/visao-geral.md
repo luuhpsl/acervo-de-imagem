@@ -41,10 +41,15 @@ Arquivos vetoriais são convertidos temporariamente para JPG para análise e thu
 
 ## Estado atual
 
-Versão atual documentada: `2.0.10`.
+Versão atual documentada: `2.0.11`.
 
 Principais recursos recentes:
 
+- Vitrine compatível com a coleção principal e com o caminho legado do Firestore.
+- Normalização dos metadados novos para pesquisa, visualização e exportação.
+- Descrições acessíveis mais completas geradas para pessoas com deficiência visual.
+- Log com cores distintas para mensagens normais, sucessos, avisos e erros.
+- Substituição de imagens semelhantes com remoção baseada nos caminhos reais do Storage.
 - Layout retrô novo.
 - Tema escuro/claro.
 - Checkpoint de fila.

@@ -316,6 +316,33 @@
         return '';
     }
 
+    function normalizarDocumentoAcervo(id, data) {
+        const files = data.files || {};
+        const keywords = normalizarLista(data.keywords);
+        const palavrasPt = normalizarLista(data.palavras_chave_pt);
+        const palavrasEn = normalizarLista(data.palavras_chave_en);
+        return {
+            id,
+            ...data,
+            nome_original: data.original_name || data.nome_original || data.nome_amigavel || id,
+            origem: data.source || data.origem || '',
+            url_thumbnail: files.thumb?.url || data.url_thumb || data.url_thumbnail || data.url_visualizacao || '',
+            url_visualizacao: files.medium?.url || files.thumb?.url || data.url_medium || data.url_visualizacao || data.url_thumbnail || '',
+            url_original: files.original?.url || data.url_original || '',
+            tipo_imagem: data.visual_type || data.tipo_imagem || '',
+            estilo_tecnica: data.visual_type || data.estilo_tecnica || '',
+            formato: data.orientation || data.formato || '',
+            cores_predominantes: normalizarLista(data.colors || data.cores_predominantes || data.predominant_colors_pt),
+            area_conhecimento: data.knowledge_area || data.area_conhecimento || '',
+            palavras_chave_pt: palavrasPt.length ? palavrasPt : keywords.slice(0, 10),
+            palavras_chave_en: palavrasEn.length ? palavrasEn : keywords.slice(10),
+            descricao_detalhada: data.description || data.descricao_detalhada || '',
+            data_processamento: data.processed_at || data.data_processamento || '',
+            phash: data.phash || '',
+            sha256: data.sha256 || ''
+        };
+    }
+
     function mostrarLogin(mensagem) {
         loginArea.style.display = 'block';
         appDiv.style.display = 'none';
@@ -362,17 +389,22 @@
         tabelaEl.style.display = 'none';
 
         try {
-            const snapshot = await db.collection('acervo-visual-unificado/default/images').get();
             const docs = [];
-            snapshot.forEach(doc => {
+            const snapshotNovo = await db.collection('acervo-visual-unificado').get();
+            snapshotNovo.forEach(doc => {
                 const data = doc.data();
-            docs.push({
-                id: doc.id,
-                ...data,
-                palavras_chave_pt: normalizarLista(data.palavras_chave_pt),
-                palavras_chave_en: normalizarLista(data.palavras_chave_en),
+                docs.push(normalizarDocumentoAcervo(doc.id, data));
             });
-            });
+
+            try {
+                const snapshotLegado = await db.collection('acervo-visual-unificado/default/images').get();
+                snapshotLegado.forEach(doc => {
+                    const data = doc.data();
+                    docs.push(normalizarDocumentoAcervo(doc.id, data));
+                });
+            } catch (legacyErr) {
+                console.warn('Caminho legado indisponivel:', legacyErr);
+            }
 
             // Agrupar por SHA-256 (conteúdo idêntico)
             const mapa = new Map();

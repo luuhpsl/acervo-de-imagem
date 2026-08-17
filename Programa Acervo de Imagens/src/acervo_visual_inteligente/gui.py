@@ -21,7 +21,7 @@ load_local_env()
 try:
     from acervo_visual_inteligente import __version__
 except Exception:
-    __version__ = "2.0.10"
+    __version__ = "2.0.11"
 
 
 APP_VERSION = __version__
@@ -58,12 +58,37 @@ THEMES = {
         "entry_bg": "#101010",
         "entry_fg": "#f2f2f2",
         "log_bg": "#080808",
-        "log_fg": "#39ff77",
+        "log_fg": "#f2f2f2",
         "accent": "#a66cff",
         "progress": "#39ff77",
         "progress_trough": "#101010",
     },
 }
+
+
+def configurar_tags_log_texto(log_widget):
+    """Aplica cores legiveis no log conforme o tema atual."""
+    if log_widget is None:
+        return
+    if CURRENT_THEME_NAME == "dark":
+        cores = {
+            "log_normal": "#f2f2f2",
+            "log_sucesso": "#39ff77",
+            "log_erro": "#ff4d6a",
+            "log_aviso": "#ffd166",
+        }
+    else:
+        cores = {
+            "log_normal": "#111111",
+            "log_sucesso": "#006b1f",
+            "log_erro": "#9b0000",
+            "log_aviso": "#7a4b00",
+        }
+    for tag, cor in cores.items():
+        try:
+            log_widget.tag_configure(tag, foreground=cor)
+        except tk.TclError:
+            pass
 
 
 def _app_dir():
@@ -274,7 +299,7 @@ def load_catalogo_logic():
             sys.path.insert(0, path)
     module = types.ModuleType("catalogo_logic")
     module.__file__ = PARENT_MAIN
-    with open(PARENT_MAIN, "r", encoding="utf-8", errors="replace") as f:
+    with open(PARENT_MAIN, "r", encoding="utf-8-sig", errors="replace") as f:
         source = f.read()
     interface_start = source.find("# INTERFACE")
     helpers_start = source.find("# FUN", interface_start)
@@ -595,8 +620,10 @@ class LoginScreen:
                 self.status_var.set("Aguardando login no navegador...")
             elif "usuario:" in lowered or "usu" in lowered:
                 self.status_var.set("Login confirmado. Abrindo catalogo...")
+            elif "token" in lowered and ("encontrado" in lowered or "autenticando" in lowered):
+                self.status_var.set("Token encontrado. Autenticando...")
             elif "token" in lowered:
-                self.status_var.set(text)
+                self.status_var.set("Validando token...")
             try:
                 self.root.update_idletasks()
             except tk.TclError:
@@ -997,6 +1024,8 @@ class CatalogoLayout:
         theme = current_theme()
         self.root.configure(bg=theme["bg"])
         _theme_widget_tree(self.root, theme)
+        if hasattr(self, "log_texto"):
+            configurar_tags_log_texto(self.log_texto)
         style = ttk.Style()
         style.configure(
             "Retro.Horizontal.TProgressbar",
@@ -1050,6 +1079,7 @@ class CatalogoLayout:
         self.logic.PARAR_PROCESSAMENTO = False
         self.logic.QUEUE_CHECKPOINT_INTERVAL = TAMANHO_LOTE_CHECKPOINT
         self.logic.mostrar_resultado_processamento = self._mostrar_resultado_processamento
+        configurar_tags_log_texto(self.log_texto)
 
         original_log = self.logic.log
 
@@ -1417,7 +1447,7 @@ class CatalogoLayout:
         self.logic.PARAR_PROCESSAMENTO = False
         self.btn_pausar.config(relief="raised", bg=current_theme()["button_bg"])
         self.btn_parar.config(relief="raised", bg=current_theme()["button_bg"])
-        self.btn_iniciar.config(state="disabled", image=self.play_icon_disabled, bg=current_theme()["button_bg"], activebackground=current_theme()["button_bg"])
+        self.btn_iniciar.config(state="normal", image=self.play_icon_disabled, bg=current_theme()["button_bg"], activebackground=current_theme()["button_bg"])
         self.root.update_idletasks()
         try:
             self.logic.iniciar_processamento()
@@ -1444,7 +1474,7 @@ class CatalogoLayout:
         self.logic.PARAR_PROCESSAMENTO = False
         self.btn_pausar.config(relief="raised", bg=current_theme()["button_bg"])
         self.btn_parar.config(relief="raised", bg=current_theme()["button_bg"])
-        self.btn_iniciar.config(state="disabled", image=self.play_icon_disabled, bg=current_theme()["button_bg"], activebackground=current_theme()["button_bg"])
+        self.btn_iniciar.config(state="normal", image=self.play_icon_disabled, bg=current_theme()["button_bg"], activebackground=current_theme()["button_bg"])
         self.root.update_idletasks()
         try:
             self.logic.reprocessar_pendentes()
