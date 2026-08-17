@@ -1,0 +1,56 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Segunda-feira, 06:00 UTC. Vulnerabilidade nova aparece sem depender de push.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Auditoria de dependências
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+          enable-cache: true
+
+      # Confere o uv.lock — o que realmente é instalado — contra o banco de
+      # vulnerabilidades. Roda fora do `validate` porque depende de rede.
+      - name: pip-audit sobre as dependências bloqueadas
+        run: uv run python scripts/dev.py audit
+
+  secrets:
+    name: Varredura de segredos
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # O histórico completo é o que permite achar segredo commitado antes.
+          fetch-depth: 0
+
+      # Imagem oficial do gitleaks: não exige licença, ao contrário da action.
+      # `--redact` evita que um segredo encontrado vaze para o log público.
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect \
+            --source=/repo --redact --verbose --no-banner

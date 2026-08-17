@@ -1,0 +1,53 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+
+  # Impede que um segredo chegue ao commit. A regra "nunca faça commit de
+  # segredos" do AGENTS.md deixa de depender só de disciplina.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.0
+    hooks:
+      - id: gitleaks
+
+  # Todas as ferramentas Python passam pelo `dev.py`, usando a versão do
+  # uv.lock. Um hook com `rev` própria fixaria uma segunda versão do ruff, que
+  # divergiria da do projeto e reprovaria código que o `validate` aprova.
+  - repo: local
+    hooks:
+      - id: lint
+        name: ruff (lint)
+        entry: python scripts/dev.py lint-fix
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: format
+        name: ruff (formatação)
+        entry: python scripts/dev.py format
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: typecheck
+        name: mypy (modo estrito)
+        entry: python scripts/dev.py typecheck
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: tests
+        name: pytest
+        entry: python scripts/dev.py test
+        language: system
+        pass_filenames: false
+        types: [python]
+      # Só roda ao tocar em workflow. É a única rede de proteção possível: um
+      # workflow inválido não falha no CI, ele não chega a iniciar.
+      - id: check-workflows
+        name: actionlint
+        entry: python scripts/dev.py check-workflows
+        language: system
+        pass_filenames: false
+        files: ^\.github/workflows/
