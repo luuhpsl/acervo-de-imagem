@@ -29,12 +29,12 @@ app-template-gui = "app_template.gui:main"
 [dependency-groups]
 dev = [
   "build>=1.2.2",
-  "ruff>=0.16.1",
+  "ruff>=0.16.3",
   "mypy>=1.14.0",
   "pytest>=8.3.0",
   "pytest-cov>=6.0.0",
-  "pyinstaller>=6.11.0",
-  "pre-commit>=4.0.0",
+  "pyinstaller>=6.22.0",
+  "pre-commit>=4.6.2",
 ]
 
 [project.optional-dependencies]
@@ -43,12 +43,12 @@ dev = [
 # `include-group` (PEP 735). `tests/test_packaging.py` impede que divirjam.
 dev = [
   "build>=1.2.2",
-  "ruff>=0.16.1",
+  "ruff>=0.16.3",
   "mypy>=1.14.0",
   "pytest>=8.3.0",
   "pytest-cov>=6.0.0",
-  "pyinstaller>=6.11.0",
-  "pre-commit>=4.0.0",
+  "pyinstaller>=6.22.0",
+  "pre-commit>=4.6.2",
 ]
 
 [build-system]
